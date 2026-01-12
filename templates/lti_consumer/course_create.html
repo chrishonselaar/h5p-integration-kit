@@ -1,0 +1,26 @@
+{% extends 'base.html' %}
+
+{% block title %}Create Course - H5P LTI Demo{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{% url 'lti_consumer:course_list' %}">Courses</a> &raquo; Create
+</div>
+
+<div class="card">
+    <h2>Create New Course</h2>
+
+    <form method="post">
+        {% csrf_token %}
+
+        <label for="title">Course Title</label>
+        <input type="text" id="title" name="title" required placeholder="e.g., Introduction to Physics">
+
+        <label for="description">Description (optional)</label>
+        <textarea id="description" name="description" placeholder="Brief description of the course..."></textarea>
+
+        <button type="submit" class="btn btn-success">Create Course</button>
+        <a href="{% url 'lti_consumer:course_list' %}" class="btn btn-secondary">Cancel</a>
+    </form>
+</div>
+{% endblock %}

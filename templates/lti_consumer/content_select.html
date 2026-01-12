@@ -1,0 +1,63 @@
+{% extends 'base.html' %}
+
+{% block title %}Select H5P Content - {{ course.title }}{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{% url 'lti_consumer:course_list' %}">Courses</a> &raquo;
+    <a href="{% url 'lti_consumer:course_detail' course.id %}">{{ course.title }}</a> &raquo;
+    Select Content
+</div>
+
+<div class="card">
+    <h2>Select or Create H5P Content</h2>
+    <p style="color: #666; margin-bottom: 15px;">
+        Choose from existing content or create new interactive content.
+    </p>
+
+    <div id="content-list" style="margin-bottom: 20px;">
+        <p>Loading available content...</p>
+    </div>
+
+    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #eee;">
+        <h3 style="font-size: 1.1rem; margin-bottom: 15px;">Or create new content:</h3>
+        <a href="{% url 'lti_consumer:activity_add' course.id %}" class="btn btn-success">+ Create New H5P Content</a>
+    </div>
+
+    <div style="margin-top: 15px;">
+        <a href="{% url 'lti_consumer:course_detail' course.id %}" class="btn btn-secondary">Cancel</a>
+    </div>
+</div>
+
+<script>
+// Fetch available content from H5P server
+fetch('{{ h5p_server_url }}/api/content')
+    .then(response => response.json())
+    .then(data => {
+        const container = document.getElementById('content-list');
+        if (data.content && data.content.length > 0) {
+            let html = '<ul class="activity-list">';
+            data.content.forEach(item => {
+                html += `
+                    <li>
+                        <div>
+                            <div class="activity-title">${item.title || 'Untitled'}</div>
+                            <div class="activity-meta">ID: ${item.id}</div>
+                        </div>
+                        <div>
+                            <a href="{% url 'lti_consumer:course_detail' course.id %}?select=${item.id}" class="btn">Select</a>
+                        </div>
+                    </li>
+                `;
+            });
+            html += '</ul>';
+            container.innerHTML = html;
+        } else {
+            container.innerHTML = '<div class="empty-state"><p>No existing content found. Create new content below.</p></div>';
+        }
+    })
+    .catch(error => {
+        document.getElementById('content-list').innerHTML = '<p style="color: #e74c3c;">Error loading content. Is the H5P server running?</p>';
+    });
+</script>
+{% endblock %}

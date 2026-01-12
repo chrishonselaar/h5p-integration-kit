@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# Django
+*.log
+local_settings.py
+db.sqlite3
+*.pot
+*.pyc
+
+# Environment
+.env
+.env.local
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Static files
+staticfiles/
+
+# Node.js
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# H5P Server data
+h5p-server/h5p/
+h5p-server/config.json
+
+# Docker volumes (if mounted locally)
+h5p-data/
+redis-data/

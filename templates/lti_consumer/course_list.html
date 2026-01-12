@@ -1,0 +1,31 @@
+{% extends 'base.html' %}
+
+{% block title %}Courses - H5P LTI Demo{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Courses</h2>
+
+    {% if courses %}
+    <ul class="activity-list">
+        {% for course in courses %}
+        <li>
+            <div>
+                <div class="activity-title">{{ course.title }}</div>
+                <div class="activity-meta">{{ course.activities.count }} activities</div>
+            </div>
+            <a href="{% url 'lti_consumer:course_detail' course.id %}" class="btn">View</a>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="empty-state">
+        <p>No courses yet. Create your first course to get started.</p>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 20px;">
+        <a href="{% url 'lti_consumer:course_create' %}" class="btn btn-success">+ Create Course</a>
+    </div>
+</div>
+{% endblock %}

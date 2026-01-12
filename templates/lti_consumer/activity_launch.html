@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ activity.title }} - H5P Demo{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{% url 'lti_consumer:course_list' %}">Courses</a> &raquo;
+    <a href="{% url 'lti_consumer:course_detail' activity.course.id %}">{{ activity.course.title }}</a> &raquo;
+    {{ activity.title }}
+</div>
+
+<div class="card">
+    <h2>{{ activity.title }}</h2>
+
+    <div class="iframe-container" style="height: 600px;">
+        <iframe
+            id="h5p-player"
+            src="{{ h5p_server_url }}/play/{{ activity.h5p_content_id }}?userId={{ user_id }}"
+            allow="fullscreen"
+        ></iframe>
+    </div>
+
+    <div style="margin-top: 15px;">
+        <a href="{% url 'lti_consumer:course_detail' activity.course.id %}" class="btn btn-secondary">Back to Course</a>
+        <a href="{% url 'lti_consumer:activity_view' activity.id %}" class="btn btn-secondary">View Grades</a>
+    </div>
+</div>
+
+<script>
+// Listen for result messages from H5P player
+window.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'h5p-result') {
+        console.log('H5P Result:', event.data);
+        // Results are also sent directly to Django via the H5P server webhook
+    }
+});
+</script>
+{% endblock %}

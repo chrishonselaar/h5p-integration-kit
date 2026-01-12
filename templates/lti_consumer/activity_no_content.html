@@ -1,0 +1,23 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ activity.title }} - No Content{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{% url 'lti_consumer:course_list' %}">Courses</a> &raquo;
+    <a href="{% url 'lti_consumer:course_detail' activity.course.id %}">{{ activity.course.title }}</a> &raquo;
+    {{ activity.title }}
+</div>
+
+<div class="card">
+    <h2>{{ activity.title }}</h2>
+
+    <div class="empty-state">
+        <p style="font-size: 1.1rem; margin-bottom: 20px;">
+            This activity doesn't have any H5P content yet.
+        </p>
+        <a href="{% url 'lti_consumer:activity_edit' activity.id %}" class="btn btn-success">Create Content</a>
+        <a href="{% url 'lti_consumer:course_detail' activity.course.id %}" class="btn btn-secondary">Back to Course</a>
+    </div>
+</div>
+{% endblock %}

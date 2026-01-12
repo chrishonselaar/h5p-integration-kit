@@ -1,0 +1,65 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ activity.title }} - H5P LTI Demo{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{% url 'lti_consumer:course_list' %}">Courses</a> &raquo;
+    <a href="{% url 'lti_consumer:course_detail' activity.course.id %}">{{ activity.course.title }}</a> &raquo;
+    {{ activity.title }}
+</div>
+
+<div class="card">
+    <h2>{{ activity.title }}</h2>
+
+    <table class="grade-table" style="margin-bottom: 20px;">
+        <tr>
+            <th>Course</th>
+            <td>{{ activity.course.title }}</td>
+        </tr>
+        <tr>
+            <th>H5P Content ID</th>
+            <td>{{ activity.h5p_content_id|default:"Not set" }}</td>
+        </tr>
+        <tr>
+            <th>Resource Link ID</th>
+            <td><code>{{ activity.resource_link_id }}</code></td>
+        </tr>
+        <tr>
+            <th>Created</th>
+            <td>{{ activity.created_at }}</td>
+        </tr>
+    </table>
+
+    <a href="{% url 'lti_consumer:activity_launch' activity.id %}" class="btn">Launch Activity</a>
+</div>
+
+<div class="card">
+    <h2>Recent Grades</h2>
+
+    {% if grades %}
+    <table class="grade-table">
+        <thead>
+            <tr>
+                <th>User</th>
+                <th>Score</th>
+                <th>Updated</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for grade in grades %}
+            <tr>
+                <td>{{ grade.user_id }}</td>
+                <td>{{ grade.score_percentage }}</td>
+                <td>{{ grade.updated_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <div class="empty-state">
+        <p>No grades recorded yet.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

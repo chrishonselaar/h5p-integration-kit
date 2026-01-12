@@ -1,0 +1,54 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ course.title }} - H5P Demo{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{% url 'lti_consumer:course_list' %}">Courses</a> &raquo; {{ course.title }}
+</div>
+
+<div class="card">
+    <h2>{{ course.title }}</h2>
+    {% if course.description %}
+    <p style="color: #666; margin-bottom: 20px;">{{ course.description }}</p>
+    {% endif %}
+
+    <h3 style="margin-bottom: 15px; font-size: 1.1rem;">H5P Activities</h3>
+
+    {% if activities %}
+    <ul class="activity-list">
+        {% for activity in activities %}
+        <li>
+            <div>
+                <div class="activity-title">{{ activity.title }}</div>
+                <div class="activity-meta">
+                    {% if activity.h5p_content_id %}
+                    Content ID: {{ activity.h5p_content_id }}
+                    {% else %}
+                    <span style="color: #e67e22;">No content linked yet</span>
+                    {% endif %}
+                </div>
+            </div>
+            <div>
+                {% if activity.h5p_content_id %}
+                <a href="{% url 'lti_consumer:activity_launch' activity.id %}" class="btn">Play</a>
+                <a href="{% url 'lti_consumer:activity_edit' activity.id %}" class="btn btn-secondary">Edit</a>
+                {% else %}
+                <a href="{% url 'lti_consumer:activity_edit' activity.id %}" class="btn btn-success">Create Content</a>
+                {% endif %}
+                <a href="{% url 'lti_consumer:activity_view' activity.id %}" class="btn btn-secondary">Grades</a>
+            </div>
+        </li>
+        {% endfor %}
+    </ul>
+    {% else %}
+    <div class="empty-state">
+        <p>No activities yet. Add an H5P activity to this course.</p>
+    </div>
+    {% endif %}
+
+    <div style="margin-top: 20px;">
+        <a href="{% url 'lti_consumer:activity_add' course.id %}" class="btn btn-success">+ Add H5P Activity</a>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+# H5P Demo - Docker Compose
+#
+# This runs the H5P server alongside Django.
+# For development, you can also run the H5P server directly with:
+#   cd h5p-server && npm install && npm start
+
+services:
+  # Modern H5P Server using @lumieducation/h5p-server
+  h5p-server:
+    build:
+      context: ./h5p-server
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - H5P_PORT=3000
+      - DJANGO_URL=http://host.docker.internal:8000
+      - H5P_BASE_URL=http://localhost:3000
+    volumes:
+      # Mount h5p data for persistence
+      - h5p-libraries:/app/h5p/libraries
+      - h5p-content:/app/h5p/content
+      - h5p-temp:/app/h5p/temp
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+volumes:
+  h5p-libraries:
+  h5p-content:
+  h5p-temp:

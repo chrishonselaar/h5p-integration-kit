@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+
+{% block title %}Add H5P Activity - {{ course.title }}{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="{% url 'lti_consumer:course_list' %}">Courses</a> &raquo;
+    <a href="{% url 'lti_consumer:course_detail' course.id %}">{{ course.title }}</a> &raquo;
+    Add Activity
+</div>
+
+<div class="card">
+    <h2>Create New H5P Content</h2>
+    <p style="color: #666; margin-bottom: 15px;">
+        Use the H5P editor below to create interactive content. Click "Save Content" when done.
+    </p>
+
+    <div class="iframe-container" style="height: 700px;">
+        <iframe
+            id="h5p-editor"
+            src="{{ h5p_server_url }}/new?userId={{ user_id }}&returnUrl={{ return_url|urlencode }}"
+            allow="fullscreen"
+        ></iframe>
+    </div>
+
+    <div style="margin-top: 15px;">
+        <a href="{% url 'lti_consumer:course_detail' course.id %}" class="btn btn-secondary">Cancel</a>
+    </div>
+</div>
+
+<script>
+// Listen for messages from H5P editor
+window.addEventListener('message', function(event) {
+    if (event.data && event.data.type === 'h5p-saved') {
+        // Content was saved - redirect to course detail
+        window.location.href = '{% url "lti_consumer:course_detail" course.id %}';
+    } else if (event.data && event.data.type === 'h5p-cancel') {
+        window.location.href = '{% url "lti_consumer:course_detail" course.id %}';
+    }
+});
+</script>
+{% endblock %}
