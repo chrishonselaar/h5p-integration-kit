@@ -35,12 +35,23 @@ A comprehensive collection of examples for integrating H5P interactive content i
 
 ### 1. Start the H5P Server
 
+**Option A: Using Docker (Recommended)**
+
+```bash
+docker compose up -d h5p-server
+# Server running at http://localhost:3000
+```
+
+**Option B: Using Node.js directly**
+
 ```bash
 cd h5p-server
 npm install
 npm start
 # Server running at http://localhost:3000
 ```
+
+> **Important:** The H5P server requires **core library files** (JavaScript, CSS) to function. These are included in `h5p-server/h5p/core/` and `h5p-server/h5p/editor/`. When using Docker, the local `h5p-server/h5p/` directory is mounted into the container. If you see 404 errors for `/h5p/core/js/*.js` files, ensure the volume mount is working correctly.
 
 ### 2. Pick an Example
 
@@ -196,11 +207,32 @@ h5p-integration-kit/
 
 ```bash
 # Start H5P server with Docker
-docker-compose up -d h5p-server
+docker compose up -d h5p-server
 
-# Or build and run everything
-docker-compose up
+# Check it's running
+curl http://localhost:3000/health
+# Should return: {"status":"ok","service":"h5p-server"}
 ```
+
+**Volume Configuration:**
+
+The `docker-compose.yml` mounts the local `h5p-server/h5p/` directory by default. This includes:
+- `core/` - H5P core JavaScript and CSS files
+- `editor/` - H5P editor files
+- `libraries/` - Downloaded H5P content type libraries
+- `content/` - Your saved H5P content
+
+For production, you may want to use a named Docker volume instead (see comments in `docker-compose.yml`).
+
+**Troubleshooting:**
+
+If you get `EACCES: permission denied` errors when creating content:
+```bash
+# Fix permissions on the h5p data directory
+chmod -R 777 h5p-server/h5p/
+```
+
+This happens because the Docker container runs as user `h5p` (UID 1001) but the mounted directory may be owned by your local user.
 
 ## Licensing
 

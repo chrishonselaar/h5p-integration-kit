@@ -16,10 +16,10 @@ services:
       - DJANGO_URL=http://host.docker.internal:8000
       - H5P_DATA_PATH=/data/h5p
     volumes:
-      # Persistent storage for H5P content and libraries
-      - h5p_data:/data/h5p
-      # For development: mount local h5p directory instead
-      # - ./h5p-server/h5p:/data/h5p
+      # For development: mount local h5p directory
+      - ./h5p-server/h5p:/data/h5p
+      # For production: use named volume instead
+      # - h5p_data:/data/h5p
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
       interval: 30s

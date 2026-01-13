@@ -81,36 +81,36 @@ app.MapGet("/", () =>
             """))
         : """<li class="empty">No content yet. Create your first H5P activity!</li>""";
 
-    return Results.Content($"""
+    return Results.Content($$"""
         <!DOCTYPE html>
         <html>
         <head>
             <title>H5P Integration - .NET Example</title>
             <style>
-                body {{ font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }}
-                h1 {{ color: #333; }}
-                .content-list {{ list-style: none; padding: 0; }}
-                .content-item {{ padding: 15px; margin: 10px 0; background: #f5f5f5; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }}
-                .content-title {{ font-weight: bold; }}
-                .actions a {{ margin-left: 10px; padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }}
-                .actions a.edit {{ background: #6c757d; }}
-                .actions a.grades {{ background: #28a745; }}
-                .btn-create {{ display: inline-block; padding: 12px 24px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; margin-bottom: 20px; }}
-                .empty {{ color: #666; font-style: italic; }}
+                body { font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+                h1 { color: #333; }
+                .content-list { list-style: none; padding: 0; }
+                .content-item { padding: 15px; margin: 10px 0; background: #f5f5f5; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+                .content-title { font-weight: bold; }
+                .actions a { margin-left: 10px; padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+                .actions a.edit { background: #6c757d; }
+                .actions a.grades { background: #28a745; }
+                .btn-create { display: inline-block; padding: 12px 24px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; margin-bottom: 20px; }
+                .empty { color: #666; font-style: italic; }
             </style>
         </head>
         <body>
             <h1>H5P Content Library</h1>
             <a href="/create" class="btn-create" onclick="openEditor(); return false;">+ Create New Content</a>
-            <ul class="content-list">{itemsHtml}</ul>
+            <ul class="content-list">{{itemsHtml}}</ul>
             <script>
-                function openEditor(contentId) {{
-                    const returnUrl = encodeURIComponent('{APP_URL}/callback');
+                function openEditor(contentId) {
+                    const returnUrl = encodeURIComponent('{{APP_URL}}/callback');
                     const url = contentId
-                        ? '{H5P_SERVER}/edit/' + contentId + '?returnUrl=' + returnUrl
-                        : '{H5P_SERVER}/new?returnUrl=' + returnUrl;
+                        ? '{{H5P_SERVER}}/edit/' + contentId + '?returnUrl=' + returnUrl
+                        : '{{H5P_SERVER}}/new?returnUrl=' + returnUrl;
                     window.open(url, 'h5p-editor', 'width=1200,height=800');
-                }}
+                }
                 window.addEventListener('focus', () => setTimeout(() => location.reload(), 500));
             </script>
         </body>
@@ -157,22 +157,22 @@ app.MapGet("/callback", (string? contentId, string? title) =>
 app.MapGet("/play/{h5pId}", (string h5pId, string? user) =>
 {
     var userId = user ?? "demo-user";
-    return Results.Content($"""
+    return Results.Content($$"""
         <!DOCTYPE html>
         <html>
         <head>
             <title>Play H5P Content</title>
             <style>
-                body {{ font-family: system-ui, sans-serif; margin: 0; padding: 20px; }}
-                h1 {{ color: #333; margin-bottom: 10px; }}
-                .back {{ margin-bottom: 20px; display: inline-block; }}
-                iframe {{ width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px; }}
+                body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; }
+                h1 { color: #333; margin-bottom: 10px; }
+                .back { margin-bottom: 20px; display: inline-block; }
+                iframe { width: 100%; height: 600px; border: 1px solid #ddd; border-radius: 8px; }
             </style>
         </head>
         <body>
             <a href="/" class="back">&larr; Back to Library</a>
             <h1>H5P Player</h1>
-            <iframe src="{H5P_SERVER}/play/{h5pId}?userId={userId}"></iframe>
+            <iframe src="{{H5P_SERVER}}/play/{{h5pId}}?userId={{userId}}"></iframe>
         </body>
         </html>
         """, "text/html");
@@ -233,24 +233,24 @@ app.MapGet("/grades/{contentDbId:int}", (int contentDbId) =>
           })) + "</table>"
         : """<p class="empty">No grades recorded yet.</p>""";
 
-    return Results.Content($"""
+    return Results.Content($$"""
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Grades - {contentTitle}</title>
+            <title>Grades - {{contentTitle}}</title>
             <style>
-                body {{ font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }}
-                .back {{ margin-bottom: 20px; display: inline-block; }}
-                table {{ width: 100%; border-collapse: collapse; }}
-                th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
-                th {{ background: #f5f5f5; }}
-                .empty {{ color: #666; font-style: italic; }}
+                body { font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
+                .back { margin-bottom: 20px; display: inline-block; }
+                table { width: 100%; border-collapse: collapse; }
+                th, td { padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }
+                th { background: #f5f5f5; }
+                .empty { color: #666; font-style: italic; }
             </style>
         </head>
         <body>
             <a href="/" class="back">&larr; Back to Library</a>
-            <h1>Grades: {contentTitle}</h1>
-            {gradesHtml}
+            <h1>Grades: {{contentTitle}}</h1>
+            {{gradesHtml}}
         </body>
         </html>
         """, "text/html");

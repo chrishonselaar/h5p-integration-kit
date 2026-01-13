@@ -33,9 +33,11 @@ node_modules/
 npm-debug.log
 yarn-error.log
 
-# H5P Server data
-h5p-server/h5p/
-h5p-server/config.json
+# H5P Server user data (NOT core/editor files which are tracked)
+h5p-server/h5p/content/
+h5p-server/h5p/libraries/
+h5p-server/h5p/temp/
+h5p-server/h5p/config.json
 
 # Docker volumes (if mounted locally)
 h5p-data/
@@ -53,6 +55,10 @@ vendor/
 # Example databases
 examples/*/*.db
 examples/*/*.sqlite3
+
+# LTI Provider secrets
+examples/lti-provider/*.key
+examples/lti-provider/tool_config.json
 
 # Plan files
 .claude/plans/
