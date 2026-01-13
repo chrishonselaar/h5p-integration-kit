@@ -1,17 +1,20 @@
-"""Views for H5P integration (direct integration, no LTI)."""
+"""
+Sample LMS views demonstrating django_h5p plugin usage.
+
+This shows how to integrate H5P content into your own views.
+"""
 
 import json
 import uuid
-from decimal import Decimal
 from urllib.parse import urlencode
 
 from django.conf import settings
-from django.http import HttpResponse, JsonResponse
+from django.http import JsonResponse
 from django.shortcuts import render, redirect, get_object_or_404
-from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 
-from .models import Course, H5PActivity, H5PGrade
+from .models import Course, Activity
+from django_h5p.models import H5PContent
 
 
 # =============================================================================
@@ -21,7 +24,7 @@ from .models import Course, H5PActivity, H5PGrade
 def course_list(request):
     """List all courses."""
     courses = Course.objects.all()
-    return render(request, 'lti_consumer/course_list.html', {'courses': courses})
+    return render(request, 'sample_lms/course_list.html', {'courses': courses})
 
 
 @require_http_methods(["GET", "POST"])
@@ -32,15 +35,15 @@ def course_create(request):
         description = request.POST.get('description', '').strip()
         if title:
             course = Course.objects.create(title=title, description=description)
-            return redirect('lti_consumer:course_detail', course_id=course.id)
-    return render(request, 'lti_consumer/course_create.html')
+            return redirect('sample_lms:course_detail', course_id=course.id)
+    return render(request, 'sample_lms/course_create.html')
 
 
 def course_detail(request, course_id):
     """View a course with its activities."""
     course = get_object_or_404(Course, id=course_id)
     activities = course.activities.all()
-    return render(request, 'lti_consumer/course_detail.html', {
+    return render(request, 'sample_lms/course_detail.html', {
         'course': course,
         'activities': activities,
         'h5p_server_url': settings.H5P_SERVER_URL,
@@ -57,6 +60,8 @@ def activity_add(request, course_id):
 
     Opens H5P editor in a popup window to avoid cross-origin iframe issues
     while keeping the user on the Django course page.
+
+    This demonstrates creating both an Activity and H5PContent.
     """
     course = get_object_or_404(Course, id=course_id)
 
@@ -65,12 +70,18 @@ def activity_add(request, course_id):
         h5p_content_id = request.POST.get('h5p_content_id', '').strip()
 
         if h5p_content_id:
-            activity = H5PActivity.objects.create(
+            # Create H5PContent from the plugin
+            h5p_content = H5PContent.objects.create(
+                h5p_content_id=h5p_content_id,
+                title=title,
+            )
+            # Create Activity linked to H5PContent
+            Activity.objects.create(
                 course=course,
                 title=title,
-                h5p_content_id=h5p_content_id,
+                h5p_content=h5p_content,
             )
-            return redirect('lti_consumer:course_detail', course_id=course.id)
+            return redirect('sample_lms:course_detail', course_id=course.id)
 
     # Build return URL - use popup-close endpoint
     return_url = request.build_absolute_uri(f'/course/{course.id}/activity-created-popup/')
@@ -78,7 +89,7 @@ def activity_add(request, course_id):
     params = urlencode({'userId': user_id, 'returnUrl': return_url})
     h5p_editor_url = f"{settings.H5P_SERVER_URL}/new?{params}"
 
-    return render(request, 'lti_consumer/activity_add_popup.html', {
+    return render(request, 'sample_lms/activity_add_popup.html', {
         'course': course,
         'h5p_editor_url': h5p_editor_url,
     })
@@ -93,13 +104,18 @@ def activity_created(request, course_id):
     title = request.GET.get('title', '').strip() or 'H5P Activity'
 
     if content_id:
-        H5PActivity.objects.create(
+        # Create H5PContent from the plugin
+        h5p_content = H5PContent.objects.create(
+            h5p_content_id=content_id,
+            title=title,
+        )
+        Activity.objects.create(
             course=course,
             title=title,
-            h5p_content_id=content_id,
+            h5p_content=h5p_content,
         )
 
-    return redirect('lti_consumer:course_detail', course_id=course.id)
+    return redirect('sample_lms:course_detail', course_id=course.id)
 
 
 @require_http_methods(["GET"])
@@ -111,23 +127,29 @@ def activity_created_popup(request, course_id):
     title = request.GET.get('title', '').strip() or 'H5P Activity'
 
     if content_id:
-        H5PActivity.objects.create(
+        # Create H5PContent from the plugin
+        h5p_content = H5PContent.objects.create(
+            h5p_content_id=content_id,
+            title=title,
+        )
+        Activity.objects.create(
             course=course,
             title=title,
-            h5p_content_id=content_id,
+            h5p_content=h5p_content,
         )
 
     # Return a page that closes the popup
-    return render(request, 'lti_consumer/popup_close.html', {
+    return render(request, 'sample_lms/popup_close.html', {
         'message': f'Activity "{title}" created successfully!',
     })
 
 
 def activity_view(request, activity_id):
     """View an activity (for instructors) - shows grades."""
-    activity = get_object_or_404(H5PActivity, id=activity_id)
-    grades = activity.grades.all()[:20]
-    return render(request, 'lti_consumer/activity_view.html', {
+    activity = get_object_or_404(Activity, id=activity_id)
+    # Get grades from the plugin's H5PGrade model via H5PContent
+    grades = activity.get_grades()[:20]
+    return render(request, 'sample_lms/activity_view.html', {
         'activity': activity,
         'grades': grades,
     })
@@ -135,14 +157,14 @@ def activity_view(request, activity_id):
 
 def activity_launch(request, activity_id):
     """Launch/play an H5P activity (for students)."""
-    activity = get_object_or_404(H5PActivity, id=activity_id)
+    activity = get_object_or_404(Activity, id=activity_id)
 
-    if not activity.h5p_content_id:
-        return render(request, 'lti_consumer/activity_no_content.html', {
+    if not activity.h5p_content:
+        return render(request, 'sample_lms/activity_no_content.html', {
             'activity': activity,
         })
 
-    return render(request, 'lti_consumer/activity_launch.html', {
+    return render(request, 'sample_lms/activity_launch.html', {
         'activity': activity,
         'h5p_server_url': settings.H5P_SERVER_URL,
         'user_id': get_user_id(request),
@@ -154,10 +176,10 @@ def activity_edit(request, activity_id):
 
     Opens H5P editor in a popup window to avoid cross-origin iframe issues.
     """
-    activity = get_object_or_404(H5PActivity, id=activity_id)
+    activity = get_object_or_404(Activity, id=activity_id)
 
-    if not activity.h5p_content_id:
-        return redirect('lti_consumer:activity_add', course_id=activity.course.id)
+    if not activity.h5p_content:
+        return redirect('sample_lms:activity_add', course_id=activity.course.id)
 
     return_url = request.build_absolute_uri(
         f'/activity/{activity.id}/content-updated-popup/'
@@ -166,7 +188,7 @@ def activity_edit(request, activity_id):
     params = urlencode({'userId': user_id, 'returnUrl': return_url})
     h5p_editor_url = f"{settings.H5P_SERVER_URL}/edit/{activity.h5p_content_id}?{params}"
 
-    return render(request, 'lti_consumer/activity_edit_popup.html', {
+    return render(request, 'sample_lms/activity_edit_popup.html', {
         'activity': activity,
         'h5p_editor_url': h5p_editor_url,
     })
@@ -175,27 +197,33 @@ def activity_edit(request, activity_id):
 @require_http_methods(["GET"])
 def activity_content_updated(request, activity_id):
     """Callback after H5P content is updated (non-popup flow)."""
-    activity = get_object_or_404(H5PActivity, id=activity_id)
+    activity = get_object_or_404(Activity, id=activity_id)
 
     title = request.GET.get('title', '').strip()
     if title:
         activity.title = title
+        if activity.h5p_content:
+            activity.h5p_content.title = title
+            activity.h5p_content.save()
         activity.save()
 
-    return redirect('lti_consumer:activity_view', activity_id=activity.id)
+    return redirect('sample_lms:activity_view', activity_id=activity.id)
 
 
 @require_http_methods(["GET"])
 def activity_content_updated_popup(request, activity_id):
     """Callback after H5P content is updated - closes the popup window."""
-    activity = get_object_or_404(H5PActivity, id=activity_id)
+    activity = get_object_or_404(Activity, id=activity_id)
 
     title = request.GET.get('title', '').strip()
     if title:
         activity.title = title
+        if activity.h5p_content:
+            activity.h5p_content.title = title
+            activity.h5p_content.save()
         activity.save()
 
-    return render(request, 'lti_consumer/popup_close.html', {
+    return render(request, 'sample_lms/popup_close.html', {
         'message': f'Activity "{activity.title}" updated successfully!',
     })
 
@@ -203,10 +231,13 @@ def activity_content_updated_popup(request, activity_id):
 @require_http_methods(["POST"])
 def activity_delete(request, activity_id):
     """Delete an H5P activity."""
-    activity = get_object_or_404(H5PActivity, id=activity_id)
+    activity = get_object_or_404(Activity, id=activity_id)
     course_id = activity.course.id
+    # Delete associated H5PContent when deleting activity
+    if activity.h5p_content:
+        activity.h5p_content.delete()
     activity.delete()
-    return redirect('lti_consumer:course_detail', course_id=course_id)
+    return redirect('sample_lms:course_detail', course_id=course_id)
 
 
 # =============================================================================
@@ -219,7 +250,7 @@ def content_select(request, course_id):
 
     return_url = request.build_absolute_uri(f'/course/{course.id}/activity-created/')
 
-    return render(request, 'lti_consumer/content_select.html', {
+    return render(request, 'sample_lms/content_select.html', {
         'course': course,
         'h5p_server_url': settings.H5P_SERVER_URL,
         'return_url': return_url,
@@ -228,90 +259,12 @@ def content_select(request, course_id):
 
 
 # =============================================================================
-# H5P Results Webhook (receives scores from H5P server)
+# H5P Results Webhook
 # =============================================================================
-
-def _add_cors_headers(response):
-    """Add CORS headers for H5P server requests."""
-    response['Access-Control-Allow-Origin'] = '*'
-    response['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
-    response['Access-Control-Allow-Headers'] = 'Content-Type'
-    return response
-
-
-@csrf_exempt
-@require_http_methods(["POST", "OPTIONS"])
-def h5p_results(request):
-    """Receive results/scores from H5P content via xAPI webhook.
-
-    The H5P server sends xAPI statements when users complete activities.
-    """
-    # Handle CORS preflight
-    if request.method == 'OPTIONS':
-        response = HttpResponse()
-        return _add_cors_headers(response)
-
-    try:
-        data = json.loads(request.body.decode('utf-8'))
-    except json.JSONDecodeError:
-        return _add_cors_headers(JsonResponse({'error': 'Invalid JSON'}, status=400))
-
-    content_id = data.get('contentId')
-    user_id = data.get('userId', 'anonymous')
-    statement = data.get('statement', {})
-
-    if not content_id:
-        return _add_cors_headers(JsonResponse({'error': 'Missing contentId'}, status=400))
-
-    # Find the activity by H5P content ID
-    try:
-        activity = H5PActivity.objects.get(h5p_content_id=content_id)
-    except H5PActivity.DoesNotExist:
-        # Activity not tracked in Django - that's OK
-        return _add_cors_headers(JsonResponse({'status': 'ignored', 'reason': 'activity_not_found'}))
-
-    # Extract score from xAPI statement
-    result = statement.get('result', {})
-    score_obj = result.get('score', {})
-
-    raw_score = score_obj.get('raw')
-    max_score = score_obj.get('max')
-    completion = result.get('completion', False)
-    success = result.get('success')
-
-    # Calculate normalized score (0.0 to 1.0)
-    if raw_score is not None and max_score:
-        score = Decimal(str(raw_score)) / Decimal(str(max_score))
-    elif raw_score is not None:
-        score = Decimal(str(raw_score))
-    else:
-        score = None
-
-    # Get verb (completed, answered, passed, failed)
-    verb_id = statement.get('verb', {}).get('id', '')
-    verb = verb_id.split('/')[-1] if '/' in verb_id else verb_id
-
-    # Store or update grade
-    if score is not None:
-        H5PGrade.objects.update_or_create(
-            activity=activity,
-            user_id=user_id,
-            defaults={
-                'score': min(score, Decimal('1.0')),  # Cap at 1.0
-                'completed': completion,
-                'xapi_verb': verb,
-                'xapi_statement': statement,
-            }
-        )
-
-        return _add_cors_headers(JsonResponse({
-            'status': 'saved',
-            'activity_id': str(activity.id),
-            'score': float(score),
-            'verb': verb,
-        }))
-
-    return _add_cors_headers(JsonResponse({'status': 'ignored', 'reason': 'no_score'}))
+# NOTE: The xAPI results webhook is now provided by the django_h5p plugin.
+# Include it in your urls.py:
+#     path('h5p/', include('django_h5p.urls'))
+# This provides the endpoint at /h5p/results/ which stores grades in H5PGrade.
 
 
 # =============================================================================

@@ -6,8 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This demonstrates H5P interactive content integration with Django using direct integration (no LTI). It consists of two components:
 
-1. **Django LMS** (port 8000) - Course management, activity tracking, grade storage
+1. **Django LMS** (port 8000) - Sample course management app (`sample_lms`) using the `django_h5p` plugin
 2. **H5P Server** (port 3000) - Modern Node.js server using `@lumieducation/h5p-server` v10.x
+3. **django_h5p Plugin** - Reusable Django app for H5P integration (MIT licensed)
 
 **Note**: We use **nvm (Node Version Manager)** for Node.js, NOT Docker. Node.js v24.11.0 is installed via nvm at `/home/chris/.nvm/versions/node/v24.11.0/`.
 
@@ -72,7 +73,7 @@ H5P Server (localhost:3000)
 2. Django renders page with iframe pointing to H5P `/new`
 3. User creates content in H5P editor
 4. H5P server saves content, redirects to Django callback with contentId
-5. Django creates H5PActivity record with the contentId
+5. Django creates Activity record linked to H5PContent from the plugin
 
 ### Flow: Content Playback
 1. User clicks "Play" on activity
@@ -80,24 +81,31 @@ H5P Server (localhost:3000)
 3. User interacts with H5P content
 4. H5P player sends xAPI events to H5P server
 5. H5P server forwards results to Django `/h5p/results/` webhook
-6. Django stores grade in H5PGrade model
+6. Django stores grade in H5PGrade model (from django_h5p plugin)
 
 ## Key Files
 
-### Django
-- `lti_consumer/views.py` - All view functions (activity CRUD, H5P webhooks)
-- `lti_consumer/models.py` - Course, H5PActivity, H5PGrade models
-- `lti_consumer/urls.py` - URL routing
-- `lms_project/settings.py` - `H5P_SERVER_URL` config
+### Sample LMS App (sample_lms/)
+- `sample_lms/views.py` - Sample view functions (activity CRUD)
+- `sample_lms/models.py` - Course, Activity models (uses django_h5p.H5PContent)
+- `sample_lms/urls.py` - URL routing
+
+### django_h5p Plugin (django_h5p/)
+- `django_h5p/models.py` - H5PContent, H5PGrade models
+- `django_h5p/views.py` - xAPI webhook endpoint
+- `django_h5p/templatetags/h5p_tags.py` - Template tags for embedding
 
 ### H5P Server (Node.js)
 - `h5p-server/src/index.js` - Express app with all H5P endpoints
 - `h5p-server/package.json` - Uses `@lumieducation/h5p-server` v10.x
 
 ### Templates
-- `templates/lti_consumer/activity_launch.html` - Player iframe
-- `templates/lti_consumer/activity_add.html` - Editor iframe for new content
-- `templates/lti_consumer/activity_edit.html` - Editor iframe for existing content
+- `templates/sample_lms/activity_launch.html` - Player iframe
+- `templates/sample_lms/activity_add_popup.html` - Editor popup for new content
+- `templates/sample_lms/activity_edit_popup.html` - Editor popup for existing content
+
+### Project Config
+- `lms_project/settings.py` - `H5P_SERVER_URL` config
 
 ## Important Implementation Details
 

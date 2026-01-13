@@ -1,9 +1,13 @@
-"""URL configuration for H5P integration app."""
+"""
+URL configuration for the sample LMS app.
 
-from django.urls import path
+This demonstrates how to use django_h5p in your own project.
+"""
+
+from django.urls import path, include
 from . import views
 
-app_name = 'lti_consumer'
+app_name = 'sample_lms'
 
 urlpatterns = [
     # Course management
@@ -25,7 +29,9 @@ urlpatterns = [
     path('activity/<uuid:activity_id>/content-updated-popup/', views.activity_content_updated_popup, name='activity_content_updated_popup'),
     path('activity/<uuid:activity_id>/delete/', views.activity_delete, name='activity_delete'),
 
-    # H5P webhooks and API
-    path('h5p/results/', views.h5p_results, name='h5p_results'),
+    # Include django_h5p plugin URLs (provides /h5p/results/ webhook)
+    path('h5p/', include('django_h5p.urls')),
+
+    # Sample LMS API
     path('api/content/', views.api_content_list, name='api_content_list'),
 ]

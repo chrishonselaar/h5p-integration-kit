@@ -232,7 +232,7 @@ Contributions are welcome! Please:
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/chrishonselaar/h5p-lti-provider/issues)
+- **Issues**: [GitHub Issues](https://github.com/chrishonselaar/django-h5p/issues)
 - **H5P Documentation**: [h5p.org/documentation](https://h5p.org/documentation)
 - **Django Documentation**: [docs.djangoproject.com](https://docs.djangoproject.com)
 
