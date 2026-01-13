@@ -1,186 +1,205 @@
-# H5P Django Integration
+# H5P Integration Kit
 
-A complete solution for integrating [H5P](https://h5p.org) interactive content into Django applications.
+A comprehensive collection of examples for integrating H5P interactive content into your applications **without** h5p.com, WordPress, Moodle plugins, or Canvas.
 
-This project provides:
-- **H5P Server** (Docker): A containerized Node.js server for H5P content authoring and playback
-- **Django Plugin** (`django-h5p`): A reusable Django app for seamless H5P integration
+## What is H5P?
 
-## Features
+[H5P](https://h5p.org) is an open-source framework for creating interactive content: quizzes, presentations, videos, games, and more. Traditionally, H5P requires platforms like WordPress, Moodle, or paid h5p.com hosting.
 
-- Create and edit H5P interactive content (quizzes, presentations, videos, etc.)
-- Embed H5P content in any Django model using GenericForeignKey
-- Automatic grade/score collection via xAPI webhooks
-- Popup-based editor to avoid cross-origin iframe issues
-- Production-ready Docker deployment
+**This project shows you how to self-host H5P** and integrate it with any application using simple HTTP APIs.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                    Your Application                      │
+│    (Flask, FastAPI, PHP, .NET, Django, or any stack)    │
+│                                                          │
+│  1. Create content → iframe to H5P /new                 │
+│  2. Play content   → iframe to H5P /play/{id}           │
+│  3. Receive scores → webhook from H5P server            │
+└──────────────────────────┬──────────────────────────────┘
+                           │ HTTP API
+                           ▼
+┌─────────────────────────────────────────────────────────┐
+│                    H5P Server (Node.js)                  │
+│                                                          │
+│  - Creates and edits H5P content                        │
+│  - Renders H5P player                                   │
+│  - Sends xAPI scores via webhook                        │
+│  - Stores content in filesystem                         │
+└─────────────────────────────────────────────────────────┘
+```
 
 ## Quick Start
 
 ### 1. Start the H5P Server
 
 ```bash
-# Using Docker Compose
-docker-compose up -d
-
-# Or build and run manually
-cd h5p-server
-docker build -t h5p-server .
-docker run -p 3000:3000 -v h5p_data:/data/h5p h5p-server
-```
-
-### 2. Install the Django Plugin
-
-```bash
-# Copy django_h5p to your project or install via pip (when published)
-pip install django-h5p  # Coming soon
-
-# Or copy the django_h5p directory to your project
-cp -r django_h5p /path/to/your/project/
-```
-
-### 3. Configure Django
-
-```python
-# settings.py
-INSTALLED_APPS = [
-    # ...
-    'django.contrib.contenttypes',  # Required for GenericForeignKey
-    'django_h5p',
-]
-
-H5P_SERVER_URL = 'http://localhost:3000'  # Your H5P server URL
-```
-
-```python
-# urls.py
-urlpatterns = [
-    # ...
-    path('h5p/', include('django_h5p.urls')),
-]
-```
-
-### 4. Run Migrations
-
-```bash
-python manage.py migrate django_h5p
-```
-
-## Usage
-
-### Creating H5P Content
-
-```python
-from django_h5p.models import H5PContent
-
-# Create standalone H5P content
-content = H5PContent.objects.create(
-    h5p_content_id='12345',  # ID from H5P server
-    title='My Interactive Quiz'
-)
-
-# Or link to any model in your project
-from django.contrib.contenttypes.models import ContentType
-
-content = H5PContent.objects.create(
-    h5p_content_id='12345',
-    title='Lesson Quiz',
-    content_type=ContentType.objects.get_for_model(YourLessonModel),
-    object_id=str(lesson.pk)
-)
-```
-
-### Embedding in Templates
-
-```django
-{% load h5p_tags %}
-
-<!-- Embed H5P player -->
-{% h5p_player_iframe content user_id=request.user.id height="500px" %}
-
-<!-- Or use the player URL directly -->
-<iframe src="{{ content.get_player_url }}" height="500" width="100%"></iframe>
-```
-
-### Retrieving Grades
-
-```python
-from django_h5p.models import H5PGrade
-
-# Get all grades for a content item
-grades = content.grades.all()
-
-# Get a specific user's grade
-grade = H5PGrade.objects.get(content=content, user_id=str(user.id))
-print(f"Score: {grade.score_percent}%")
-```
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Your Django Project                       │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │                   django-h5p                         │    │
-│  │  • H5PContent model (links to any model)            │    │
-│  │  • H5PGrade model (stores scores)                   │    │
-│  │  • Views (player, editor, webhook)                  │    │
-│  │  • Template tags for embedding                      │    │
-│  └─────────────────────────────────────────────────────┘    │
-└─────────────────────┬───────────────────────────────────────┘
-                      │ HTTP API
-                      ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 H5P Server (Docker)                          │
-│  • /play/:contentId  - Render H5P player                    │
-│  • /edit/:contentId  - Render H5P editor                    │
-│  • /new              - Create new content                    │
-│  • xAPI webhook      - Send scores to Django                │
-│                                                              │
-│  Storage: /data/h5p (Docker volume)                         │
-│  • /content   - H5P content packages                        │
-│  • /libraries - H5P content type libraries                  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Configuration
-
-### Environment Variables (H5P Server)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `3000` | Server port |
-| `H5P_BASE_URL` | `http://localhost:3000` | Public URL of H5P server |
-| `DJANGO_URL` | `http://localhost:8000` | Django server URL (for CORS) |
-| `H5P_DATA_PATH` | `/data/h5p` | Path to H5P data directory |
-
-### Django Settings
-
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `H5P_SERVER_URL` | `http://localhost:3000` | URL to your H5P server |
-
-## Development
-
-### Running Locally (Without Docker)
-
-```bash
-# H5P Server
 cd h5p-server
 npm install
 npm start
-
-# Django
-python manage.py runserver
+# Server running at http://localhost:3000
 ```
 
-### Running Tests
+### 2. Pick an Example
+
+| Example | Language | Best For |
+|---------|----------|----------|
+| [python-flask](examples/python-flask/) | Python | Simple integration, beginners |
+| [python-fastapi](examples/python-fastapi/) | Python | Modern async applications |
+| [php](examples/php/) | PHP | WordPress-like environments |
+| [dotnet](examples/dotnet/) | C# | Enterprise .NET applications |
+| [django](examples/django/) | Python | Full-featured Django apps |
+| [lti-provider](examples/lti-provider/) | Python | LMS integration (Moodle, Canvas) |
+
+### 3. Run the Example
 
 ```bash
-# Django tests
-python manage.py test django_h5p
+# Flask example
+cd examples/python-flask
+pip install flask
+python app.py
 
-# H5P server (if tests are added)
-cd h5p-server && npm test
+# Open http://localhost:5000
+```
+
+## Integration Pattern
+
+All examples follow the same simple pattern:
+
+### Content Creation
+
+```
+1. Your app opens popup/iframe to: H5P_SERVER/new?returnUrl=YOUR_CALLBACK
+2. User creates content in H5P editor
+3. H5P server saves and redirects to: YOUR_CALLBACK?contentId=123
+4. Your app stores the contentId in your database
+```
+
+### Content Playback
+
+```
+1. Your app embeds iframe: H5P_SERVER/play/{contentId}?userId={userId}
+2. User interacts with H5P content
+3. H5P server sends score to your webhook endpoint
+4. Your app stores the grade
+```
+
+### Webhook Payload
+
+```json
+{
+  "contentId": "abc123",
+  "userId": "demo-user",
+  "statement": {
+    "verb": { "id": "http://adlnet.gov/expapi/verbs/completed" },
+    "result": {
+      "score": { "raw": 8, "max": 10 },
+      "completion": true
+    }
+  }
+}
+```
+
+## Examples Overview
+
+### Simple Examples (~150-300 lines each)
+
+| Example | Description | Run Command |
+|---------|-------------|-------------|
+| **Flask** | Minimal Python web app | `python app.py` |
+| **FastAPI** | Async Python with Pydantic | `uvicorn app:app` |
+| **PHP** | No-framework PHP | `php -S localhost:5000` |
+| **.NET** | ASP.NET Core minimal API | `dotnet run` |
+
+Each simple example demonstrates:
+- Content listing, creation, editing
+- H5P player embedding
+- Score webhook handling
+- SQLite storage
+
+### Full Django Example
+
+The [Django example](examples/django/) includes:
+- Reusable `django_h5p` plugin
+- Sample LMS with courses and activities
+- Grade tracking per user
+- Template tags for easy embedding
+
+### LTI 1.3 Tool Provider
+
+The [LTI provider](examples/lti-provider/) allows external LMS platforms to:
+- Launch H5P content via LTI 1.3
+- Return grades to LMS gradebook
+- Works with Moodle, Canvas, Blackboard, etc.
+
+## H5P Server API
+
+The Node.js H5P server exposes these endpoints:
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/new` | GET | H5P editor for new content |
+| `/edit/{id}` | GET | H5P editor for existing content |
+| `/play/{id}` | GET | H5P player |
+| `/api/content` | GET | List all content |
+| `/api/content/{id}` | GET | Get content metadata |
+| `/api/content/{id}` | DELETE | Delete content |
+| `/health` | GET | Health check |
+
+Query parameters:
+- `returnUrl` - Where to redirect after save (for /new, /edit)
+- `userId` - User identifier for tracking (for /play)
+
+## Project Structure
+
+```
+h5p-integration-kit/
+├── h5p-server/                 # Node.js H5P server (shared)
+│   ├── src/index.js           # Express app
+│   ├── package.json
+│   └── Dockerfile
+│
+├── examples/
+│   ├── python-flask/          # ~150 lines Flask app
+│   ├── python-fastapi/        # ~200 lines FastAPI app
+│   ├── php/                   # ~300 lines vanilla PHP
+│   ├── dotnet/                # ~300 lines .NET 8 app
+│   ├── django/                # Full Django example
+│   │   ├── django_h5p/       # Reusable plugin
+│   │   └── sample_lms/       # Demo LMS
+│   └── lti-provider/          # LTI 1.3 tool provider
+│
+├── docker-compose.yml         # Run H5P server with Docker
+├── README.md                  # This file
+└── LICENSE                    # MIT License
+```
+
+## Why Self-Host H5P?
+
+| Feature | h5p.com | WordPress Plugin | This Project |
+|---------|---------|------------------|--------------|
+| Free to use | Limited | Yes | Yes |
+| No vendor lock-in | No | Partial | Yes |
+| Custom integration | API only | PHP hooks | Any language |
+| Own your data | No | Yes | Yes |
+| LTI support | Paid | Plugin | Included |
+| Docker support | No | No | Yes |
+
+## Requirements
+
+- **H5P Server**: Node.js 18+ (uses @lumieducation/h5p-server)
+- **Examples**: See individual README files
+
+## Docker Support
+
+```bash
+# Start H5P server with Docker
+docker-compose up -d h5p-server
+
+# Or build and run everything
+docker-compose up
 ```
 
 ## Licensing
@@ -190,52 +209,39 @@ This project uses a dual-license structure:
 | Component | License | Why |
 |-----------|---------|-----|
 | **H5P Server** (`h5p-server/`) | GPL-3.0 | Uses [@lumieducation/h5p-server](https://github.com/Lumieducation/H5P-Nodejs-library) which is GPL-licensed |
-| **Django Plugin** (`django_h5p/`) | MIT | Communicates via HTTP API only, no GPL code incorporated |
+| **Examples** (`examples/`) | MIT | Communicate via HTTP API only, no GPL code incorporated |
 
 The HTTP API boundary between components means you can:
 - Run the H5P server as a Docker container (GPL applies to server code)
-- Use the Django plugin in proprietary projects (MIT allows this)
+- Use the examples in proprietary projects (MIT allows this)
 
 ## Acknowledgments
 
-This project stands on the shoulders of giants. We are deeply grateful to:
+This project stands on the shoulders of giants:
 
-### Core Technologies
-
-- **[H5P](https://h5p.org)** - The incredible open-source framework for creating interactive content. H5P has revolutionized how educational content is created and shared.
-
-- **[Lumi Education / @lumieducation/h5p-server](https://github.com/Lumieducation/H5P-Nodejs-library)** - The excellent Node.js implementation of H5P that powers our server. Their work made this integration possible.
-
-- **[Django](https://www.djangoproject.com)** - The web framework for perfectionists with deadlines. Django's robust ecosystem and community continue to inspire.
-
-### Development
-
-- **[Claude Code](https://claude.ai/code)** - This project was developed with significant assistance from Anthropic's Claude Code AI assistant. Claude helped with architecture decisions, code implementation, debugging, and documentation. We believe in transparency about AI-assisted development.
-
-### Open Source Community
-
-Special thanks to all contributors to the open-source projects we depend on:
-- Node.js and npm ecosystem
-- Express.js
-- Python and pip ecosystem
-- Docker
+- **[H5P](https://h5p.org)** - The incredible open-source framework for creating interactive content
+- **[Lumi Education](https://github.com/Lumieducation/H5P-Nodejs-library)** - The excellent Node.js implementation of H5P
+- **[Claude Code](https://claude.ai/code)** - AI-assisted development
 
 ## Contributing
 
-Contributions are welcome! Please:
+Contributions welcome! Areas of interest:
+- Additional language examples (Ruby, Go, Java)
+- LTI 1.1 support
+- Deep linking implementation
+- More H5P content type examples
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## Related Projects
+
+- [@lumieducation/h5p-server](https://github.com/Lumieducation/H5P-Nodejs-library) - The H5P Node.js library we use
+- [tunapanda/h5p-standalone](https://github.com/tunapanda/h5p-standalone) - H5P player only (no editor)
+- [h5p/h5p-php-library](https://github.com/h5p/h5p-php-library) - Official H5P PHP library
 
 ## Support
 
-- **Issues**: [GitHub Issues](https://github.com/chrishonselaar/django-h5p/issues)
-- **H5P Documentation**: [h5p.org/documentation](https://h5p.org/documentation)
-- **Django Documentation**: [docs.djangoproject.com](https://docs.djangoproject.com)
+- [H5P Documentation](https://h5p.org/documentation)
+- [H5P Forum](https://h5p.org/forum)
 
 ---
 
-Made with ❤️ for the education community
+Made with care for the education community

@@ -40,3 +40,19 @@ h5p-server/config.json
 # Docker volumes (if mounted locally)
 h5p-data/
 redis-data/
+
+# .NET
+bin/
+obj/
+*.dll
+*.pdb
+
+# PHP
+vendor/
+
+# Example databases
+examples/*/*.db
+examples/*/*.sqlite3
+
+# Plan files
+.claude/plans/
