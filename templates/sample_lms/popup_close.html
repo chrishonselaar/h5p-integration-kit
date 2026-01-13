@@ -35,10 +35,24 @@
         <p>This window will close automatically...</p>
     </div>
     <script>
-        // Close popup after a brief delay
+        // Navigate parent window and close popup
+        const redirectUrl = "{{ redirect_url|default:''|escapejs }}";
+
         setTimeout(function() {
+            // Try to navigate the parent/opener window
+            if (window.opener && !window.opener.closed) {
+                try {
+                    if (redirectUrl) {
+                        window.opener.location.href = redirectUrl;
+                    } else {
+                        window.opener.location.reload();
+                    }
+                } catch (e) {
+                    // Cross-origin - parent will detect closed popup and redirect
+                }
+            }
             window.close();
-        }, 1500);
+        }, 800);
     </script>
 </body>
 </html>

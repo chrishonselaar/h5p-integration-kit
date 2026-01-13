@@ -138,9 +138,12 @@ def activity_created_popup(request, course_id):
             h5p_content=h5p_content,
         )
 
-    # Return a page that closes the popup
+    # Return a page that closes the popup and refreshes the opener
+    from django.urls import reverse
+    redirect_url = reverse('sample_lms:course_detail', args=[course.id])
     return render(request, 'sample_lms/popup_close.html', {
         'message': f'Activity "{title}" created successfully!',
+        'redirect_url': redirect_url,
     })
 
 
@@ -186,7 +189,7 @@ def activity_edit(request, activity_id):
     )
     user_id = get_user_id(request)
     params = urlencode({'userId': user_id, 'returnUrl': return_url})
-    h5p_editor_url = f"{settings.H5P_SERVER_URL}/edit/{activity.h5p_content_id}?{params}"
+    h5p_editor_url = f"{settings.H5P_SERVER_URL}/edit/{activity.h5p_server_id}?{params}"
 
     return render(request, 'sample_lms/activity_edit_popup.html', {
         'activity': activity,
@@ -223,8 +226,12 @@ def activity_content_updated_popup(request, activity_id):
             activity.h5p_content.save()
         activity.save()
 
+    # Return a page that closes the popup and refreshes the opener
+    from django.urls import reverse
+    redirect_url = reverse('sample_lms:activity_view', args=[activity.id])
     return render(request, 'sample_lms/popup_close.html', {
         'message': f'Activity "{activity.title}" updated successfully!',
+        'redirect_url': redirect_url,
     })
 
 
