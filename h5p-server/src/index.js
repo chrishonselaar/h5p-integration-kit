@@ -64,7 +64,36 @@ app.use('/h5p/core', express.static(path.join(h5pBasePath, 'core')));
 app.use('/h5p/editor', express.static(path.join(h5pBasePath, 'editor')));
 app.use('/h5p/content', express.static(path.join(h5pBasePath, 'content')));
 app.use('/h5p/libraries', express.static(path.join(h5pBasePath, 'libraries')));
-app.use('/temp-files', express.static(path.join(h5pBasePath, 'temp')));
+
+// Temp files: H5P stores them in user-specific subdirectories but generates URLs without user prefix
+// So we need to search across all user directories
+app.use('/temp-files', async (req, res, next) => {
+    const requestedPath = req.path; // e.g., /videos/video-abc123.mp4
+    const tempDir = path.join(h5pBasePath, 'temp');
+
+    // First try direct path (in case it's there)
+    const directPath = path.join(tempDir, requestedPath);
+    try {
+        await fs.access(directPath);
+        return res.sendFile(directPath);
+    } catch {}
+
+    // Search in user subdirectories
+    try {
+        const entries = await fs.readdir(tempDir, { withFileTypes: true });
+        for (const entry of entries) {
+            if (entry.isDirectory()) {
+                const userPath = path.join(tempDir, entry.name, requestedPath);
+                try {
+                    await fs.access(userPath);
+                    return res.sendFile(userPath);
+                } catch {}
+            }
+        }
+    } catch {}
+
+    next(); // Not found, continue to next handler
+});
 
 // Additional H5P paths
 const librariesPath = path.join(h5pBasePath, 'libraries');
@@ -139,6 +168,7 @@ async function initH5P() {
     config.contentUrl = '/h5p/content';
     config.playUrl = '/h5p/play';
     config.downloadUrl = '/h5p/download';
+    config.temporaryFilesUrl = '/temp-files';
 
     // H5P.fs signature:
     // (config, librariesPath, temporaryStoragePath, contentPath,
