@@ -33,33 +33,6 @@
     const activityViewUrl = "{% url 'sample_lms:activity_view' activity.id %}";
     let editorWindow = null;
 
-    // Listen for localStorage changes (backup for cross-origin popup communication)
-    window.addEventListener('storage', function(e) {
-        if (e.key === 'h5p_content_saved') {
-            try {
-                const data = JSON.parse(e.newValue);
-                if (data && Date.now() - data.timestamp < 5000) {
-                    localStorage.removeItem('h5p_content_saved');
-                    window.location.href = data.redirectUrl || activityViewUrl;
-                }
-            } catch (err) {}
-        }
-    });
-
-    // Also check on focus (in case storage event was missed)
-    window.addEventListener('focus', function() {
-        try {
-            const saved = localStorage.getItem('h5p_content_saved');
-            if (saved) {
-                const data = JSON.parse(saved);
-                if (data && Date.now() - data.timestamp < 5000) {
-                    localStorage.removeItem('h5p_content_saved');
-                    window.location.href = data.redirectUrl || activityViewUrl;
-                }
-            }
-        } catch (err) {}
-    });
-
     document.getElementById('open-editor-btn').addEventListener('click', function() {
         // Open popup window
         const width = 1200;
@@ -83,16 +56,13 @@
             document.getElementById('status').style.border = '1px solid #b3d7ff';
             document.getElementById('status').style.borderRadius = '4px';
 
-            // Check if popup was closed
+            // When popup closes, redirect to activity view
             const checkPopup = setInterval(function() {
                 if (editorWindow.closed) {
                     clearInterval(checkPopup);
-                    // Give localStorage event a moment to fire, then redirect
-                    setTimeout(function() {
-                        window.location.href = activityViewUrl;
-                    }, 300);
+                    window.location.href = activityViewUrl;
                 }
-            }, 500);
+            }, 300);
         } else {
             alert('Popup blocked! Please allow popups for this site.');
         }
