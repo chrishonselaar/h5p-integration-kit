@@ -40,52 +40,24 @@
         console.log('popup_close: redirectUrl =', redirectUrl);
         console.log('popup_close: window.opener =', window.opener);
 
-        // Method 1: localStorage signal
-        try {
+        // Direct navigation - simplest approach (same-origin so this should work)
+        if (window.opener && !window.opener.closed) {
+            console.log('popup_close: navigating opener to', redirectUrl);
+            window.opener.location.href = redirectUrl || '/';
+            window.close();
+        } else {
+            console.log('popup_close: no opener, using localStorage fallback');
+            // Fallback: localStorage signal for parent to detect
             localStorage.setItem('h5p_content_saved', JSON.stringify({
                 timestamp: Date.now(),
                 redirectUrl: redirectUrl
             }));
-            console.log('popup_close: localStorage set');
-        } catch (e) {
-            console.log('popup_close: localStorage failed', e);
-        }
-
-        // Method 2: postMessage to opener
-        if (window.opener) {
-            try {
-                window.opener.postMessage({
-                    type: 'h5p_content_saved',
-                    redirectUrl: redirectUrl
-                }, '*');
-                console.log('popup_close: postMessage sent');
-            } catch (e) {
-                console.log('popup_close: postMessage failed', e);
-            }
-        }
-
-        setTimeout(function() {
-            // Method 3: Direct navigation of opener
-            if (window.opener && !window.opener.closed) {
-                try {
-                    console.log('popup_close: navigating opener to', redirectUrl);
-                    window.opener.location.href = redirectUrl || '/';
-                } catch (e) {
-                    console.log('popup_close: direct navigation failed', e);
-                }
-            }
-
-            // Close this popup
             window.close();
-
-            // Fallback if close didn't work
+            // If close failed, redirect this window
             setTimeout(function() {
-                if (redirectUrl) {
-                    // Navigate this window as last resort
-                    window.location.href = redirectUrl;
-                }
-            }, 1000);
-        }, 300);
+                window.location.href = redirectUrl || '/';
+            }, 500);
+        }
     </script>
 </body>
 </html>

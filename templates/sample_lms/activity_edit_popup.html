@@ -34,7 +34,6 @@
     let editorWindow = null;
 
     document.getElementById('open-editor-btn').addEventListener('click', function() {
-        // Open popup window
         const width = 1200;
         const height = 800;
         const left = (screen.width - width) / 2;
@@ -56,13 +55,16 @@
             document.getElementById('status').style.border = '1px solid #b3d7ff';
             document.getElementById('status').style.borderRadius = '4px';
 
-            // When popup closes, redirect to activity view
-            const checkPopup = setInterval(function() {
-                if (editorWindow.closed) {
-                    clearInterval(checkPopup);
-                    window.location.href = activityViewUrl;
-                }
-            }, 300);
+            // When parent regains focus, check if popup is closed
+            function onFocus() {
+                setTimeout(function() {
+                    if (!editorWindow || editorWindow.closed) {
+                        window.removeEventListener('focus', onFocus);
+                        window.location.href = activityViewUrl;
+                    }
+                }, 100);
+            }
+            window.addEventListener('focus', onFocus);
         } else {
             alert('Popup blocked! Please allow popups for this site.');
         }
