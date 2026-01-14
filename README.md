@@ -255,13 +255,13 @@ For production, you may want to use a named Docker volume instead (see comments 
 
 **Troubleshooting:**
 
-If you get `EACCES: permission denied` errors when creating content:
+If you get `EACCES: permission denied` errors when switching between Docker and local Node.js:
 ```bash
-# Fix permissions on the h5p data directory
-chmod -R 777 h5p-server/h5p/
+# Fix ownership to match your local user
+sudo chown -R $USER:$USER h5p-server/h5p/
 ```
 
-This happens because the Docker container runs as user `h5p` (UID 1001) but the mounted directory may be owned by your local user.
+The docker-compose.yml uses `user: "${UID}:${GID}"` to run as your host user, avoiding permission conflicts with mounted volumes.
 
 ## Licensing
 

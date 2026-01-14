@@ -208,6 +208,22 @@ async function initH5P() {
         translationCallback
     );
 
+    // Custom renderer that omits the download link (default renderer always shows it)
+    h5pPlayer.setRenderer((model) => `<!doctype html>
+<html class="h5p-iframe">
+<head>
+    <meta charset="utf-8">
+    ${model.styles.map((style) => `<link rel="stylesheet" href="${style}"/>`).join('\n    ')}
+    ${model.scripts.map((script) => `<script src="${script}"></script>`).join('\n    ')}
+    <script>
+        window.H5PIntegration = ${JSON.stringify(model.integration, null, 2)};
+    </script>
+</head>
+<body>
+    <div class="h5p-content" data-content-id="${model.contentId}"></div>
+</body>
+</html>`);
+
     console.log('H5P initialized successfully');
 }
 
@@ -591,7 +607,11 @@ function wrapEditorHtml(editorHtml, contentId, returnUrl) {
     const customStyles = `
     <style>
         body { padding: 20px; }
-        .h5p-editor-cancel { margin-top: 20px; }
+        .h5p-editor-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
         .btn-cancel {
             padding: 10px 20px; font-size: 16px; cursor: pointer;
             border: none; border-radius: 4px;
@@ -609,11 +629,14 @@ function wrapEditorHtml(editorHtml, contentId, returnUrl) {
             cursor: pointer !important;
         }
         #save-h5p:hover { background: #1e6a8d !important; }
+        /* Hide the original button location */
+        #h5p-content-form > input#save-h5p { display: none; }
     </style>`;
 
     const cancelScript = `
-    <div class="h5p-editor-cancel">
-        <button class="btn-cancel" onclick="cancelH5PEdit()">Cancel</button>
+    <div class="h5p-editor-buttons">
+        <button type="button" id="save-h5p-clone" class="button button-primary button-large" style="padding: 10px 20px; font-size: 16px; background: #21759b; color: white; border: none; border-radius: 4px; cursor: pointer;">${contentId ? 'Save' : 'Create'}</button>
+        <button type="button" class="btn-cancel" onclick="cancelH5PEdit()">Cancel</button>
     </div>
     <script>
         const h5pReturnUrl = ${returnUrl ? `'${returnUrl}'` : 'null'};
@@ -626,6 +649,11 @@ function wrapEditorHtml(editorHtml, contentId, returnUrl) {
                 window.history.back();
             }
         }
+
+        // Make cloned save button trigger the original save
+        document.getElementById('save-h5p-clone').addEventListener('click', function() {
+            document.getElementById('save-h5p').click();
+        });
 
         // Intercept XHR and fetch responses to detect successful saves and redirect
         (function() {
@@ -722,6 +750,11 @@ function wrapEditorHtml(editorHtml, contentId, returnUrl) {
     </script>`;
 
     html = html.replace('</head>', crossOriginFix + '</head>');
+
+    // Change button text from "Create" to "Save" when editing existing content
+    if (contentId) {
+        html = html.replace('value="Create"', 'value="Save"');
+    }
 
     return html;
 }
