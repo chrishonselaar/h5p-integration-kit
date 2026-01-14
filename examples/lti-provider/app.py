@@ -31,6 +31,10 @@ from werkzeug.exceptions import Forbidden
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'change-this-in-production-use-random-key')
 
+# Configure session cookies for cross-site LTI requests
+app.config['SESSION_COOKIE_SAMESITE'] = 'None'
+app.config['SESSION_COOKIE_SECURE'] = True
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -97,10 +101,24 @@ def get_lti_config_path():
     """Get path to LTI tool configuration file."""
     return os.path.join(os.path.dirname(__file__), CONFIG_FILE)
 
+class SessionCache:
+    """Simple cache adapter that uses Flask session for storage."""
+    def __init__(self, session_obj):
+        self._session = session_obj
+
+    def get(self, key):
+        return self._session.get(key)
+
+    def set(self, key, value, exp=None):
+        self._session[key] = value
+
+    def delete(self, key):
+        self._session.pop(key, None)
+
 def get_launch_data_storage():
     """Get cache storage for LTI launch data."""
     # Using Flask session for simplicity - use Redis in production
-    return FlaskCacheDataStorage(session)
+    return FlaskCacheDataStorage(SessionCache(session))
 
 def get_tool_conf():
     """Get LTI tool configuration from JSON file."""
@@ -152,13 +170,18 @@ def lti_login():
 
     return oidc_login.enable_check_cookies().redirect(target_link_uri)
 
-@app.route('/lti/launch', methods=['POST'])
+@app.route('/lti/launch', methods=['GET', 'POST'])
 def lti_launch():
     """
     LTI 1.3 Resource Link Launch.
     This is where users land after authentication.
     We embed the H5P player and track the launch for grade passback.
     """
+    # Debug: log what we receive
+    print(f"Launch request method: {request.method}")
+    print(f"Launch form data keys: {list(request.form.keys())}")
+    print(f"Launch args: {list(request.args.keys())}")
+
     tool_conf = get_tool_conf()
     launch_data_storage = get_launch_data_storage()
 
@@ -202,7 +225,7 @@ def lti_launch():
         user_id,
         resource_link_id,
         launch_data.get('iss', ''),
-        ags_claim.get('scope', []),
+        json.dumps(ags_claim.get('scope', [])),
         ags_claim.get('lineitems', ''),
         ags_claim.get('lineitem', '')
     ))
@@ -238,13 +261,15 @@ def content_picker():
     import urllib.request
     try:
         with urllib.request.urlopen(f'{H5P_SERVER}/api/content') as response:
-            content_list = json.loads(response.read())
+            data = json.loads(response.read())
+            content_list = data.get('content', []) if isinstance(data, dict) else data
     except Exception as e:
         content_list = []
 
     return render_template_string(CONTENT_PICKER_TEMPLATE,
         content_list=content_list,
-        launch_id=launch_id
+        launch_id=launch_id,
+        h5p_server=H5P_SERVER
     )
 
 @app.route('/lti/play/<h5p_content_id>')
@@ -271,6 +296,81 @@ def lti_play(h5p_content_id):
         launch_id=launch_id,
         app_url=APP_URL
     )
+
+@app.route('/lti/callback')
+def lti_callback():
+    """Callback after H5P editor saves - closes popup window."""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head><title>Saved</title></head>
+    <body>
+        <script>
+            if (window.opener) {
+                window.opener.location.reload();
+            }
+            window.close();
+        </script>
+        <p>Content saved. You can close this window.</p>
+    </body>
+    </html>
+    '''
+
+@app.route('/lti/grades/<h5p_content_id>')
+def lti_grades(h5p_content_id):
+    """Show grades for a specific H5P content."""
+    db = get_db()
+    grades_list = db.execute('''
+        SELECT g.*, l.user_id, l.h5p_content_id
+        FROM grades g
+        JOIN lti_launches l ON g.launch_id = l.launch_id
+        WHERE l.h5p_content_id = ?
+        ORDER BY g.created_at DESC
+    ''', (h5p_content_id,)).fetchall()
+
+    html = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Grades - H5P Content {h5p_content_id}</title>
+        <style>
+            body {{ font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }}
+            h1 {{ color: #333; }}
+            .back {{ margin-bottom: 20px; }}
+            .back a {{ color: #007bff; }}
+            table {{ width: 100%; border-collapse: collapse; }}
+            th, td {{ padding: 12px; text-align: left; border-bottom: 1px solid #ddd; }}
+            th {{ background: #f5f5f5; }}
+            .empty {{ color: #666; font-style: italic; }}
+        </style>
+    </head>
+    <body>
+        <div class="back"><a href="javascript:history.back()">&larr; Back</a></div>
+        <h1>Grades for Content {h5p_content_id}</h1>
+    '''
+
+    if grades_list:
+        html += '''
+        <table>
+            <tr><th>User</th><th>Score</th><th>Sent to LMS</th><th>Date</th></tr>
+        '''
+        for grade in grades_list:
+            score_pct = (grade['score'] / grade['max_score'] * 100) if grade['max_score'] else 0
+            sent_status = 'Yes' if grade['sent_to_lms'] else 'No'
+            html += f'''
+            <tr>
+                <td>{grade['user_id']}</td>
+                <td>{grade['score']:.0f}/{grade['max_score']:.0f} ({score_pct:.0f}%)</td>
+                <td>{sent_status}</td>
+                <td>{grade['created_at']}</td>
+            </tr>
+            '''
+        html += '</table>'
+    else:
+        html += '<p class="empty">No grades recorded yet.</p>'
+
+    html += '</body></html>'
+    return html
 
 @app.route('/lti/webhook', methods=['POST'])
 def lti_webhook():
@@ -470,20 +570,39 @@ CONTENT_PICKER_TEMPLATE = '''
         body { font-family: system-ui, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; }
         h1 { color: #333; }
         .content-list { list-style: none; padding: 0; }
-        .content-item { padding: 15px; margin: 10px 0; background: #f5f5f5; border-radius: 8px; }
-        .content-item a { text-decoration: none; color: #007bff; font-weight: bold; }
+        .content-item { padding: 15px; margin: 10px 0; background: #f5f5f5; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+        .content-title { font-weight: bold; }
+        .actions a { margin-left: 10px; padding: 8px 16px; background: #007bff; color: white; text-decoration: none; border-radius: 4px; }
+        .actions a.edit { background: #6c757d; }
+        .actions a.grades { background: #28a745; }
+        .btn-create { display: inline-block; padding: 12px 24px; background: #28a745; color: white; text-decoration: none; border-radius: 4px; margin-bottom: 20px; }
         .empty { color: #666; font-style: italic; }
     </style>
+    <script>
+        const H5P_SERVER = '{{ h5p_server }}';
+        function openEditor(contentId) {
+            const returnUrl = encodeURIComponent(window.location.origin + '/lti/callback');
+            const url = contentId
+                ? H5P_SERVER + '/edit/' + contentId + '?returnUrl=' + returnUrl
+                : H5P_SERVER + '/new?returnUrl=' + returnUrl;
+            window.open(url, 'h5p-editor', 'width=1200,height=800');
+        }
+        window.addEventListener('focus', () => setTimeout(() => location.reload(), 500));
+    </script>
 </head>
 <body>
     <h1>Select H5P Content</h1>
+    <a href="#" class="btn-create" onclick="openEditor(); return false;">+ Create New Content</a>
     <ul class="content-list">
     {% if content_list %}
         {% for item in content_list %}
         <li class="content-item">
-            <a href="/lti/play/{{ item.contentId }}?launch_id={{ launch_id }}">
-                {{ item.title or 'Untitled' }}
-            </a>
+            <span class="content-title">{{ item.title or 'Untitled' }}</span>
+            <span class="actions">
+                <a href="/lti/play/{{ item.id }}?launch_id={{ launch_id }}">Play</a>
+                <a href="#" class="edit" onclick="openEditor('{{ item.id }}'); return false;">Edit</a>
+                <a href="/lti/grades/{{ item.id }}" class="grades">Grades</a>
+            </span>
         </li>
         {% endfor %}
     {% else %}

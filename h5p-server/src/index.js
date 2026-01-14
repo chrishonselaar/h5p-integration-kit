@@ -30,11 +30,23 @@ const H5P_BASE_URL = process.env.H5P_BASE_URL || `http://localhost:${PORT}`;
 // Storage paths (configurable for Docker deployment)
 const H5P_DATA_PATH = process.env.H5P_DATA_PATH || path.resolve(__dirname, '../h5p');
 
-// Middleware
-app.use(cors({
-    origin: [DJANGO_URL, 'http://localhost:8000', 'http://127.0.0.1:8000'],
-    credentials: true
-}));
+// CORS middleware - allow all origins for development
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+    } else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
+    }
+    next();
+});
 
 // Apply bodyParser conditionally
 // Skip bodyParser ONLY for multipart/form-data requests (file uploads)

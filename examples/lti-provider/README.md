@@ -52,6 +52,102 @@ python app.py
 | `/lti/config` | Tool configuration (JSON) |
 | `/lti/webhook` | Receives xAPI scores from H5P |
 
+## Testing with Saltire (Quick Test)
+
+[Saltire](https://saltire.lti.app/) is a free LTI testing platform - no signup required. It's the fastest way to test your LTI tool provider.
+
+### Step 1: Start Your Servers
+
+```bash
+# Terminal 1: H5P Server
+cd h5p-server && npm start
+
+# Terminal 2: LTI Provider
+cd examples/lti-provider && python app.py
+```
+
+### Step 2: Expose Your Local Server (Required)
+
+Saltire needs to reach your local server. Use Cloudflare Tunnel (recommended) or similar:
+
+```bash
+# Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+cloudflared tunnel --url http://localhost:5001
+```
+
+Copy the HTTPS URL (e.g., `https://something-random.trycloudflare.com`)
+
+> **Note**: Avoid ngrok free tier - its interstitial warning page breaks iframes and LTI launches.
+
+### Step 3: Configure Saltire Platform
+
+1. Go to https://saltire.lti.app/platform
+2. Click **"Security Model"** in the left sidebar
+3. In the **Security Model** section at the top, set:
+
+| Saltire Field | Your Tool Value |
+|---------------|-----------------|
+| Message URL | `https://YOUR-TUNNEL-URL/lti/launch` |
+
+4. Expand **"Tool Details"** section below and enter:
+
+| Saltire Field | Your Tool Value |
+|---------------|-----------------|
+| Initiate login URL | `https://YOUR-TUNNEL-URL/lti/login` |
+| Redirection URI(s) | `https://YOUR-TUNNEL-URL/lti/launch` |
+| Public keyset URL | `https://YOUR-TUNNEL-URL/.well-known/jwks.json` |
+
+5. Click **"Fetch"** next to Public keyset URL to load your tool's public key
+6. Click **"Save"**
+
+### Step 4: Configure Your Tool
+
+Copy values from Saltire's **"Platform Details"** section into `tool_config.json`:
+
+| Saltire Field | tool_config.json Key |
+|---------------|---------------------|
+| Platform/Issuer ID | (use as the top-level key) |
+| Client ID | `client_id` |
+| Deployment ID | `deployment_ids` (as array) |
+| Authentication request URL | `auth_login_url` |
+| Access Token service URL | `auth_token_url` |
+| Public keyset URL | `key_set_url` |
+
+Example `tool_config.json`:
+
+```json
+{
+  "https://saltire.lti.app/platform": [{
+    "default": true,
+    "client_id": "saltire.lti.app",
+    "deployment_ids": ["YOUR_DEPLOYMENT_ID"],
+    "auth_login_url": "https://saltire.lti.app/platform/auth",
+    "auth_token_url": "https://saltire.lti.app/platform/token/YOUR_TOKEN_ID",
+    "key_set_url": "https://saltire.lti.app/platform/jwks/YOUR_JWKS_ID",
+    "private_key_file": "private.key",
+    "public_key_file": "public.key"
+  }]
+}
+```
+
+**Important**: Restart the tool after changing config: `python app.py`
+
+### Step 5: Test the Launch
+
+1. In Saltire, click **"Connect"** button (top right)
+2. Select **"Perform launch"**
+3. You should see the H5P content picker
+4. Select content and interact with it
+5. Grades should pass back to Saltire after completing H5P activities
+
+### Troubleshooting Saltire
+
+- **"Invalid redirect"**: Make sure tunnel URL matches exactly in both configs
+- **"JWT validation failed"**: Restart app.py after changing tool_config.json
+- **Tunnel URL changed**: Cloudflared URLs change on restart - update both configs
+
+---
+
 ## Configuration
 
 ### 1. Generate RSA Keys
