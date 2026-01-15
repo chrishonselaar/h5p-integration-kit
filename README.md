@@ -1,12 +1,12 @@
 # H5P Integration Kit
 
-A comprehensive collection of examples for integrating H5P interactive content into your applications **without** h5p.com, WordPress, Moodle plugins, or Canvas.
+A comprehensive collection of examples for integrating H5P interactive content into custom applications via self-hosted deployment.
 
 ## What is H5P?
 
-[H5P](https://h5p.org) is an open-source framework for creating interactive content: quizzes, presentations, videos, games, and more. Traditionally, H5P requires platforms like WordPress, Moodle, or paid h5p.com hosting.
+[H5P](https://h5p.org) is an open-source framework for creating interactive content: quizzes, presentations, videos, games, and more. The easiest way to use H5P is through [h5p.com](https://h5p.com) (managed hosting), WordPress, Moodle, or other supported platforms.
 
-**This project shows you how to self-host H5P** and integrate it with any application using simple HTTP APIs.
+**This project is for developers who need to self-host H5P** and integrate it with custom applications using simple HTTP APIs.
 
 ## Architecture
 
@@ -213,16 +213,15 @@ h5p-integration-kit/
 └── LICENSE                    # MIT License
 ```
 
-## Why Self-Host H5P?
+## When to Self-Host
 
-| Feature | h5p.com | WordPress Plugin | This Project |
-|---------|---------|------------------|--------------|
-| Free to use | Limited | Yes | Yes |
-| No vendor lock-in | No | Partial | Yes |
-| Custom integration | API only | PHP hooks | Any language |
-| Own your data | No | Yes | Yes |
-| LTI support | Paid | Plugin | Included |
-| Docker support | No | No | Yes |
+For most users, [h5p.com](https://h5p.com) or platform plugins (WordPress, Moodle) are the best choice—they're maintained, supported, and easy to set up.
+
+Self-hosting makes sense when you need:
+- **Custom tech stack integration** — embed H5P in Flask, Django, .NET, or any framework
+- **Full infrastructure control** — run on your own servers, air-gapped environments, or specific cloud providers
+- **Deep customization** — modify the server, add custom xAPI handling, or integrate with existing auth systems
+- **Docker/container deployments** — include H5P as a service in your stack
 
 ## Requirements
 
