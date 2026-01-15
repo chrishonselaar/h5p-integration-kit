@@ -252,6 +252,27 @@ The `docker-compose.yml` mounts the local `h5p-server/h5p/` directory by default
 
 For production, you may want to use a named Docker volume instead (see comments in `docker-compose.yml`).
 
+**Production Setup with Named Volume:**
+
+When using a separate data directory or named Docker volume (recommended for production), you must initialize it with the core H5P files before starting the container:
+
+```bash
+# Create data directory and copy required files
+mkdir -p /var/lib/h5p-data
+cp -r h5p-server/h5p/core /var/lib/h5p-data/
+cp -r h5p-server/h5p/editor /var/lib/h5p-data/
+chown -R 1001:1001 /var/lib/h5p-data  # Match container user
+
+# Run with volume mount
+docker run -d --name h5p-server \
+  -p 3000:3000 \
+  -v /var/lib/h5p-data:/data/h5p \
+  -e H5P_BASE_URL=https://your-domain.com \
+  h5p-server:latest
+```
+
+Without the `core/` and `editor/` directories in your data volume, you'll get 404 errors for `/h5p/core/js/*.js` and `/h5p/editor/` files, and the H5P editor/player won't load.
+
 **Troubleshooting:**
 
 If you get `EACCES: permission denied` errors when switching between Docker and local Node.js:
