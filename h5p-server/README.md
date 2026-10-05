@@ -28,6 +28,7 @@ This server wraps those libraries into a **complete HTTP service** with:
 | `GET /api/content/:id` | Get single content metadata |
 | `DELETE /api/content/:id` | Delete content |
 | `GET /api/content-types` | List available H5P content types |
+| `POST /api/import[?contentId=<id>]` | Import an `.h5p` package (multipart field `file`): installs or updates its libraries and stores the content. With `contentId` the content gets that id and replaces an existing item with the same id, so a re-import keeps its URL |
 
 ### Integration Features
 
@@ -45,6 +46,7 @@ This server wraps those libraries into a **complete HTTP service** with:
 - Volume mounts for data persistence
 - CORS configured for cross-origin embedding
 - Cross-origin iframe fixes for H5P's parent window access
+- Optional protected mode for a server on the internet: public players, login for everything else (see below)
 
 ## Quick Start
 
@@ -78,7 +80,37 @@ Environment variables:
 | `PORT` | `3000` | Server port |
 | `H5P_BASE_URL` | `http://localhost:3000` | Public URL (for asset URLs in rendered HTML) |
 | `H5P_DATA_PATH` | `./h5p` | Path to H5P data directory |
+| `H5P_ADMIN_PASSWORD` | *(unset)* | Switches on **protected mode** (below). Unset means open mode: no login anywhere, for development only |
+| `H5P_ADMIN_USER` | `admin` | User name for the admin login in protected mode |
 | `H5P_EXTRA_SUBCONTENT` | *(unset)* | Path to a JSON file that lets containers accept extra content types, e.g. `{"H5P.Column": ["H5P.DeepZoomPage 0.1"], "H5P.QuestionSet": ["H5P.DeepZoomQuestion 0.1"]}`. H5P.Column, H5P.QuestionSet and similar containers only allow the sub-content types listed in their `semantics.json`; the editor removes any other type on save. Unset means stock behaviour |
+
+### Protected mode
+
+Without `H5P_ADMIN_PASSWORD` anyone who can reach the server can create, change and delete content. Set it before you put the server on the internet. Then:
+
+- **Public, no login:** playing content. Only `GET`/`HEAD` on `/play/:id`, the static files a player loads (`/h5p/core/…`, `/h5p/libraries/…`, `/h5p/content/…`) and `/health`.
+- **Everything else needs the admin login:** the editor, saving, deleting, importing, the content list and H5P's AJAX routes. Log in with HTTP Basic (user `H5P_ADMIN_USER`, password `H5P_ADMIN_PASSWORD`) or send `Authorization: Bearer <password>` from a script.
+  - A browser gets the login dialog only on a page load. Background requests get a plain 401, so a public player never shows a login dialog.
+  - A write that carries Basic credentials but comes from another site (`Origin` / `Sec-Fetch-Site`) is refused with 403, so other sites cannot use a logged-in admin's browser.
+  - Admin pages cannot be framed by other sites (`frame-ancestors 'self'`).
+- **Players are anonymous:** no user is passed to H5P, nothing is saved per user (no resume state, no `setFinished`), and `userId`/`webhookUrl` query parameters are ignored. Results still go to the parent page by `postMessage`.
+- **CORS** allows anonymous `GET` from any origin.
+
+Embed a protected server's content with H5P's resizer, which sizes the iframe to the content:
+
+```html
+<iframe src="https://h5p.example.org/play/<id>" width="100%" height="600" frameborder="0"
+        allowfullscreen="allowfullscreen" allow="fullscreen" title="…"></iframe>
+<script src="https://h5p.example.org/h5p/core/js/h5p-resizer.js" charset="UTF-8"></script>
+```
+
+Import content with a fixed id (for example from a converter), so its public URL stays the same on every re-import:
+
+```bash
+curl -H "Authorization: Bearer $H5P_ADMIN_PASSWORD" -F file=@item.h5p "https://h5p.example.org/api/import?contentId=80222"
+```
+
+Tests: `node test/protected-mode.mjs <baseUrl> <password> <package.h5p>` against a protected server, and `node test/escaping.mjs <baseUrl> <contentId>` against an open one.
 
 ## Integration Pattern
 

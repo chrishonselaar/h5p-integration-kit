@@ -16,7 +16,12 @@ import fileUpload from 'express-fileupload';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
+import { createHash, timingSafeEqual } from 'crypto';
 import * as H5P from '@lumieducation/h5p-server';
+import { createRequire } from 'module';
+
+// Lumi's own editor page template (wrapped below so its inline JSON is escaped)
+const lumiEditorRenderer = createRequire(import.meta.url)('@lumieducation/h5p-server/build/src/renderers/default.js').default;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,8 +35,69 @@ const H5P_BASE_URL = process.env.H5P_BASE_URL || `http://localhost:${PORT}`;
 // Storage paths (configurable for Docker deployment)
 const H5P_DATA_PATH = process.env.H5P_DATA_PATH || path.resolve(__dirname, '../h5p');
 
-// CORS middleware - allow all origins for development
-app.use(cors({
+// Protected mode (opt-in, for a server on the internet): set H5P_ADMIN_PASSWORD.
+// Then only playing is public (GET /play/:id and the static files it loads);
+// everything else (editor, save, delete, import, content list, H5P ajax) needs the
+// admin login: HTTP Basic (user H5P_ADMIN_USER, default "admin") or
+// "Authorization: Bearer <H5P_ADMIN_PASSWORD>". Players are anonymous and keep no
+// user state. Without the variable the server behaves as before (open, for development).
+const ADMIN_USER = process.env.H5P_ADMIN_USER || 'admin';
+const ADMIN_PASSWORD = process.env.H5P_ADMIN_PASSWORD || '';
+const PROTECTED = ADMIN_PASSWORD !== '';
+const PUBLIC_ORIGIN = new URL(H5P_BASE_URL).origin;
+const PUBLIC_PATHS = /^\/(health$|play\/[^/]+$|h5p\/(core|libraries|content)\/)/;
+
+const sameSecret = (a, b) => timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
+
+function isAdminRequest(req) {
+    const [scheme, value] = (req.get('authorization') || '').split(' ');
+    if (!value) return false;
+    if (/^bearer$/i.test(scheme)) return sameSecret(value, ADMIN_PASSWORD);
+    if (!/^basic$/i.test(scheme)) return false;
+    const pair = Buffer.from(value, 'base64').toString('utf8');
+    const i = pair.indexOf(':');
+    return i > 0 && sameSecret(pair.slice(0, i), ADMIN_USER) & sameSecret(pair.slice(i + 1), ADMIN_PASSWORD);
+}
+
+// The browser sends cached Basic credentials with requests that other sites start,
+// so a write that comes from another site is refused (CSRF).
+function fromOtherSite(req) {
+    const site = req.get('sec-fetch-site');
+    if (site && site !== 'same-origin' && site !== 'none') return true;
+    const origin = req.get('origin');
+    return !!origin && origin !== PUBLIC_ORIGIN;
+}
+
+if (PROTECTED) {
+    app.use((req, res, next) => {
+        if ((req.method === 'GET' || req.method === 'HEAD') && PUBLIC_PATHS.test(req.path)) {
+            req.isAdmin = false;
+            return next();
+        }
+        if (!isAdminRequest(req)) {
+            // Ask for the login only on page loads (and from non-browser clients). On a background
+            // request a challenge would pop up a login dialog in a public player and block the page.
+            const mode = req.get('sec-fetch-mode');
+            if (!mode || mode === 'navigate') res.set('WWW-Authenticate', 'Basic realm="H5P admin", charset="UTF-8"');
+            return res.status(401).type('text/plain').send('Login required');
+        }
+        if (!['GET', 'HEAD'].includes(req.method) && /^basic/i.test(req.get('authorization')) && fromOtherSite(req)) {
+            return res.status(403).type('text/plain').send('Cross-site request refused');
+        }
+        req.isAdmin = true;
+        res.set('Content-Security-Policy', "frame-ancestors 'self'");
+        next();
+    });
+}
+
+// Values written into inline <script> blocks: a JS literal that cannot close the script
+const jsLiteral = (value, indent) => JSON.stringify(value ?? null, null, indent)
+    .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+// Only http(s) URLs may be used as return/redirect targets
+const httpUrlOrNull = (value) => (typeof value === 'string' && /^https?:\/\//i.test(value) ? value : null);
+
+// CORS: open for development; in protected mode only anonymous reads
+app.use(cors(PROTECTED ? { origin: '*', methods: ['GET', 'HEAD'] } : {
     origin: true,  // Reflect the request origin
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -131,6 +197,11 @@ async function ensureDirectories() {
 
 // Create a simple user object (in production, get from session/auth)
 function createUser(req) {
+    if (PROTECTED) {
+        return req.isAdmin
+            ? { id: ADMIN_USER, name: 'Admin', email: '', type: 'local' }
+            : { id: 'anonymous', name: 'Anonymous', email: '', type: 'local' };
+    }
     return {
         id: req.query.userId || req.body?.userId || 'anonymous',
         name: req.query.userName || req.body?.userName || 'Anonymous User',
@@ -210,6 +281,12 @@ async function initH5P() {
     config.downloadUrl = '/h5p/download';
     config.temporaryFilesUrl = '/temp-files';
 
+    // Anonymous public players have no user to store state or results for
+    if (PROTECTED) {
+        config.contentUserStateSaveInterval = false;
+        config.setFinishedEnabled = false;
+    }
+
     // H5P.fs signature:
     // (config, librariesPath, temporaryStoragePath, contentPath,
     //  contentUserDataStorage, contentStorage, translationCallback, urlGenerator, options)
@@ -246,7 +323,10 @@ async function initH5P() {
         translationCallback
     );
 
-    // Custom renderer that omits the download link (default renderer always shows it)
+    // Custom renderer that omits the download link (default renderer always shows it).
+    // Protected mode: no user in H5PIntegration, so H5P core treats the player as signed out and
+    // does not request saved state from /contentUserData (an admin-only route) on every play.
+    const playerIntegration = (integration) => (PROTECTED ? { ...integration, user: undefined } : integration);
     h5pPlayer.setRenderer((model) => `<!doctype html>
 <html class="h5p-iframe">
 <head>
@@ -254,13 +334,18 @@ async function initH5P() {
     ${model.styles.map((style) => `<link rel="stylesheet" href="${style}"/>`).join('\n    ')}
     ${model.scripts.map((script) => `<script src="${script}"></script>`).join('\n    ')}
     <script>
-        window.H5PIntegration = ${JSON.stringify(model.integration, null, 2)};
+        window.H5PIntegration = ${jsLiteral(playerIntegration(model.integration), 2)};
     </script>
 </head>
 <body>
     <div class="h5p-content" data-content-id="${model.contentId}"></div>
 </body>
 </html>`);
+
+    // Lumi's editor page writes H5PIntegration (user name, content id) into a <script>
+    // with plain JSON.stringify; swap in the escaped literal
+    h5pEditor.setRenderer((model) => lumiEditorRenderer(model)
+        .replace(JSON.stringify(model.integration, null, 2), () => jsLiteral(model.integration, 2)));
 
     console.log('H5P initialized successfully');
 }
@@ -279,7 +364,7 @@ async function setupRoutes() {
     });
 
     // Add request logging for debugging
-    app.use('/h5p/ajax', (req, res, next) => {
+    if (!PROTECTED) app.use('/h5p/ajax', (req, res, next) => {
         console.log(`[H5P AJAX] ${req.method} ${req.path} action=${req.query.action}`);
         console.log(`  Content-Type: ${req.get('content-type')}`);
         console.log(`  Body present: ${!!req.body}`);
@@ -394,8 +479,9 @@ app.get('/play/:contentId', async (req, res) => {
     try {
         const user = createUser(req);
         const contentId = req.params.contentId;
-        // Optional webhook URL for xAPI events (if not provided, only postMessage is used)
-        const webhookUrl = req.query.webhookUrl || '';
+        // Optional webhook URL for xAPI events (if not provided, only postMessage is used).
+        // Not in protected mode: a public link must not send results elsewhere.
+        const webhookUrl = PROTECTED ? '' : (httpUrlOrNull(req.query.webhookUrl) || '');
 
         // h5pPlayer.render() returns complete HTML with the default renderer
         let playerHtml = await h5pPlayer.render(
@@ -433,7 +519,7 @@ app.get('/play/:contentId', async (req, res) => {
         }
 
         // Track xAPI events
-        const webhookUrl = '${webhookUrl}';
+        const webhookUrl = ${jsLiteral(webhookUrl)};
         H5P.externalDispatcher.on('xAPI', function(event) {
             const statement = event.data.statement;
 
@@ -450,8 +536,8 @@ app.get('/play/:contentId', async (req, res) => {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
-                            contentId: '${contentId}',
-                            userId: '${user.id}',
+                            contentId: ${jsLiteral(contentId)},
+                            userId: ${jsLiteral(user.id)},
                             statement: statement
                         })
                     }).catch(err => console.error('Failed to send results:', err));
@@ -461,8 +547,8 @@ app.get('/play/:contentId', async (req, res) => {
                 if (window.parent !== window) {
                     window.parent.postMessage({
                         type: 'h5p-result',
-                        contentId: '${contentId}',
-                        userId: '${user.id}',
+                        contentId: ${jsLiteral(contentId)},
+                        userId: ${jsLiteral(user.id)},
                         statement: statement
                     }, '*');
                 }
@@ -476,7 +562,7 @@ app.get('/play/:contentId', async (req, res) => {
         res.send(playerHtml);
     } catch (error) {
         console.error('Error rendering player:', error);
-        res.status(500).send(`Error: ${error.message}`);
+        res.status(500).type('text/plain').send(`Error: ${error.message}`);
     }
 });
 
@@ -497,7 +583,7 @@ app.get('/edit/:contentId', async (req, res) => {
         res.send(wrapEditorHtml(editorHtml, req.params.contentId, req.query.returnUrl));
     } catch (error) {
         console.error('Error rendering editor:', error);
-        res.status(500).send(`Error: ${error.message}`);
+        res.status(500).type('text/plain').send(`Error: ${error.message}`);
     }
 });
 
@@ -509,11 +595,11 @@ app.post('/edit/:contentId', fileUpload({ useTempFiles: true, tempFileDir: tempP
         // Handle both JSON (from our form handler) and multipart form data
         const library = req.body?.library;
         const parameters = req.body?.params || req.body?.parameters;
-        const returnUrl = req.query.returnUrl;
+        const returnUrl = httpUrlOrNull(req.query.returnUrl);
 
         if (!library || !parameters) {
             console.log('Missing data. Body:', req.body);
-            return res.status(400).send('Missing library or parameters');
+            return res.status(400).type('text/plain').send('Missing library or parameters');
         }
 
         // The form sends params as: {"params": {...actual content...}, "metadata": {...}}
@@ -544,7 +630,7 @@ app.post('/edit/:contentId', fileUpload({ useTempFiles: true, tempFileDir: tempP
         return res.json({ success: true, contentId, redirectUrl });
     } catch (error) {
         console.error('Error saving content:', error);
-        res.status(500).send(`Error: ${error.message}`);
+        res.status(500).type('text/plain').send(`Error: ${error.message}`);
     }
 });
 
@@ -561,7 +647,7 @@ app.get('/new', async (req, res) => {
         res.send(wrapEditorHtml(editorHtml, null, req.query.returnUrl));
     } catch (error) {
         console.error('Error rendering editor:', error);
-        res.status(500).send(`Error: ${error.message}`);
+        res.status(500).type('text/plain').send(`Error: ${error.message}`);
     }
 });
 
@@ -573,11 +659,11 @@ app.post('/new', fileUpload({ useTempFiles: true, tempFileDir: tempPath }), asyn
         // Form fields come from req.body when using express-fileupload
         const library = req.body?.library;
         const parameters = req.body?.params || req.body?.parameters;
-        const returnUrl = req.query.returnUrl;
+        const returnUrl = httpUrlOrNull(req.query.returnUrl);
 
         if (!library || !parameters) {
             console.log('Missing data. Body:', req.body);
-            return res.status(400).send('Missing library or parameters');
+            return res.status(400).type('text/plain').send('Missing library or parameters');
         }
 
         // The form sends params as: {"params": {...actual content...}, "metadata": {...}}
@@ -609,7 +695,7 @@ app.post('/new', fileUpload({ useTempFiles: true, tempFileDir: tempPath }), asyn
 
     } catch (error) {
         console.error('Error saving new content:', error);
-        res.status(500).send(`Error: ${error.message}`);
+        res.status(500).type('text/plain').send(`Error: ${error.message}`);
     }
 });
 
@@ -635,6 +721,33 @@ app.post('/api/save', async (req, res) => {
     } catch (error) {
         console.error('Error saving content:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// Import an .h5p package: POST /api/import[?contentId=<id>], multipart field "file".
+// Installs or updates the package's libraries. With contentId the content gets that id
+// and replaces an existing item with the same id (stable public URLs on re-import).
+app.post('/api/import', fileUpload({ useTempFiles: true, tempFileDir: tempPath, limits: { fileSize: 500 * 1024 * 1024 } }), async (req, res) => {
+    const file = req.files?.file;
+    const contentId = req.query.contentId;
+    try {
+        if (!file || Array.isArray(file)) return res.status(400).json({ error: 'Send one .h5p file in the field "file"' });
+        if (contentId !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(contentId)) {
+            return res.status(400).json({ error: 'contentId may only contain letters, digits, "_" and "-"' });
+        }
+        const result = await h5pEditor.packageImporter.addPackageLibrariesAndContent(file.tempFilePath, createUser(req), contentId);
+        res.json({
+            success: true,
+            contentId: result.id,
+            title: result.metadata.title,
+            mainLibrary: result.metadata.mainLibrary,
+            librariesChanged: result.installedLibraries.filter((l) => l.type !== 'none').length
+        });
+    } catch (error) {
+        console.error('Error importing package:', error);
+        res.status(500).json({ error: error.message });
+    } finally {
+        if (file?.tempFilePath) await fs.rm(file.tempFilePath, { force: true });
     }
 });
 
@@ -677,8 +790,8 @@ function wrapEditorHtml(editorHtml, contentId, returnUrl) {
         <button type="button" class="btn-cancel" onclick="cancelH5PEdit()">Cancel</button>
     </div>
     <script>
-        const h5pReturnUrl = ${returnUrl ? `'${returnUrl}'` : 'null'};
-        const h5pContentId = ${contentId ? `'${contentId}'` : 'null'};
+        const h5pReturnUrl = ${jsLiteral(httpUrlOrNull(returnUrl))};
+        const h5pContentId = ${jsLiteral(contentId || null)};
 
         function cancelH5PEdit() {
             if (h5pReturnUrl) {
