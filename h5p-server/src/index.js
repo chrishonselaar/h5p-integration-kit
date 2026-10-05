@@ -139,6 +139,44 @@ function createUser(req) {
     };
 }
 
+// Optional: let containers (H5P.Column, H5P.QuestionSet, ...) accept extra
+// sub-content types. Their semantics.json has a fixed list of allowed libraries,
+// and the editor drops anything not on it. H5P_EXTRA_SUBCONTENT points to a JSON
+// file such as:
+//   { "H5P.Column": ["H5P.DeepZoomPage 0.1"], "H5P.QuestionSet": ["H5P.DeepZoomQuestion 0.1"] }
+// Every library field of the named container (any version) gets those options.
+async function loadExtraSubcontent() {
+    const file = process.env.H5P_EXTRA_SUBCONTENT;
+    if (!file) return undefined;
+    const extra = JSON.parse(await fs.readFile(file, 'utf8'));
+    console.log(`Extra sub-content types from ${file}:`, extra);
+    return extra;
+}
+
+function addLibraryOptions(fields, extraOptions) {
+    return fields.map((field) => {
+        const copy = { ...field };
+        if (copy.type === 'library' && Array.isArray(copy.options)) {
+            copy.options = [...copy.options, ...extraOptions.filter((o) => !copy.options.includes(o))];
+        }
+        if (Array.isArray(copy.fields)) copy.fields = addLibraryOptions(copy.fields, extraOptions);
+        if (copy.field) copy.field = addLibraryOptions([copy.field], extraOptions)[0];
+        return copy;
+    });
+}
+
+function editorOptions(extraSubcontent) {
+    if (!extraSubcontent) return undefined;
+    return {
+        customization: {
+            alterLibrarySemantics: (library, semantics) => {
+                const extraOptions = extraSubcontent[library.machineName];
+                return extraOptions ? addLibraryOptions(semantics, extraOptions) : semantics;
+            }
+        }
+    };
+}
+
 // Initialize H5P
 let h5pEditor;
 let h5pPlayer;
@@ -195,7 +233,7 @@ async function initH5P() {
         undefined,           // 6. contentStorage (use default)
         translationCallback, // 7. translationCallback
         urlGenerator,        // 8. urlGenerator
-        undefined            // 9. options
+        editorOptions(await loadExtraSubcontent()) // 9. options
     );
 
     // Create a proper H5PPlayer instance for playing content
