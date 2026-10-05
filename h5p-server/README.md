@@ -90,7 +90,8 @@ Without `H5P_ADMIN_PASSWORD` anyone who can reach the server can create, change 
 
 - **Public, no login:** playing content. Only `GET`/`HEAD` on `/play/:id`, the static files a player loads (`/h5p/core/…`, `/h5p/libraries/…`, `/h5p/content/…`) and `/health`.
 - **Everything else needs the admin login:** the editor, saving, deleting, importing, the content list and H5P's AJAX routes. Log in with HTTP Basic (user `H5P_ADMIN_USER`, password `H5P_ADMIN_PASSWORD`) or send `Authorization: Bearer <password>` from a script.
-  - A browser gets the login dialog only on a page load. Background requests get a plain 401, so a public player never shows a login dialog.
+  - A browser gets the login dialog only on a page load. Opening an admin page (e.g. `/edit/<id>`) without being logged in sends the browser to `/login?next=…`, which asks for the login and then returns to that page. Logging in at this root-level URL makes the browser use the login for the whole server, including the editor's own requests under `/h5p/`. You can also open `/login` directly.
+  - Background requests get a plain 401, so a public player never shows a login dialog. Scripts and `curl` get a 401 with a Basic challenge, as before.
   - A write that carries Basic credentials but comes from another site (`Origin` / `Sec-Fetch-Site`) is refused with 403, so other sites cannot use a logged-in admin's browser.
   - Admin pages cannot be framed by other sites (`frame-ancestors 'self'`).
 - **Players are anonymous:** no user is passed to H5P, nothing is saved per user (no resume state, no `setFinished`), and `userId`/`webhookUrl` query parameters are ignored. Results still go to the parent page by `postMessage`.

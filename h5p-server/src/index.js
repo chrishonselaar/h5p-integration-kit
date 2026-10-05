@@ -68,26 +68,44 @@ function fromOtherSite(req) {
     return !!origin && origin !== PUBLIC_ORIGIN;
 }
 
+// Where /login sends the browser next: only a path on this server ("/x"; not "//host", "/\host" or a scheme)
+const localPathOr = (value, fallback) =>
+    (typeof value === 'string' && /^\/(?![/\\])/.test(value) && !/[\x00-\x20\x7f]/.test(value) ? value : fallback);
+
 if (PROTECTED) {
+    const CHALLENGE = 'Basic realm="H5P admin", charset="UTF-8"';
     app.use((req, res, next) => {
-        if ((req.method === 'GET' || req.method === 'HEAD') && PUBLIC_PATHS.test(req.path)) {
+        const isRead = req.method === 'GET' || req.method === 'HEAD';
+        if (isRead && PUBLIC_PATHS.test(req.path)) {
             req.isAdmin = false;
             return next();
         }
         if (!isAdminRequest(req)) {
-            // Ask for the login only on page loads (and from non-browser clients). On a background
-            // request a challenge would pop up a login dialog in a public player and block the page.
             const mode = req.get('sec-fetch-mode');
-            if (!mode || mode === 'navigate') res.set('WWW-Authenticate', 'Basic realm="H5P admin", charset="UTF-8"');
+            if (isRead && req.path === '/login') {
+                return res.status(401).set('WWW-Authenticate', CHALLENGE).type('text/html')
+                    .send('<!doctype html><title>Login required</title><p>Login required. Reload this page to log in.</p>');
+            }
+            // A browser reuses Basic credentials only below the folder of the URL that asked for them
+            // (/edit/ for /edit/x), so the editor's own requests under /h5p/ would go without them.
+            // Page loads therefore log in at /login: at the root, the login covers the whole server.
+            if (isRead && mode === 'navigate') {
+                return res.redirect(303, '/login?next=' + encodeURIComponent(req.originalUrl));
+            }
+            // Ask for the login only from non-browser clients (and other page loads). On a background
+            // request a challenge would pop up a login dialog in a public player and block the page.
+            if (!mode || mode === 'navigate') res.set('WWW-Authenticate', CHALLENGE);
             return res.status(401).type('text/plain').send('Login required');
         }
-        if (!['GET', 'HEAD'].includes(req.method) && /^basic/i.test(req.get('authorization')) && fromOtherSite(req)) {
+        if (!isRead && /^basic/i.test(req.get('authorization')) && fromOtherSite(req)) {
             return res.status(403).type('text/plain').send('Cross-site request refused');
         }
         req.isAdmin = true;
         res.set('Content-Security-Policy', "frame-ancestors 'self'");
         next();
     });
+    // Logged in (the middleware above asks for the login): back to the page that was asked for
+    app.get('/login', (req, res) => res.redirect(303, localPathOr(req.query.next, '/')));
 }
 
 // Values written into inline <script> blocks: a JS literal that cannot close the script

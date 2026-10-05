@@ -34,12 +34,24 @@ check('anonymous GET /health -> 200', (await status('/health')) === 200);
 check('wrong password -> 401', (await status('/api/content', { headers: { authorization: basic('admin', PASSWORD + 'x') } })) === 401);
 check('wrong user -> 401', (await status('/api/content', { headers: { authorization: basic('root', PASSWORD) } })) === 401);
 // node:http, since fetch() sets Sec-Fetch-Mode itself; no mode = a non-browser client such as curl
-const challenge = (mode) => new Promise((ok, fail) => http.get(BASE + '/new', { headers: mode ? { 'sec-fetch-mode': mode } : {} },
-  (r) => { r.resume(); ok(r.headers['www-authenticate'] || ''); }).on('error', fail));
-check('401 on a page load asks for Basic login', /^Basic /.test(await challenge('navigate')));
+const get = (path, mode, headers = {}) => new Promise((ok, fail) => http.get(BASE + path, { headers: { ...headers, ...(mode ? { 'sec-fetch-mode': mode } : {}) } },
+  (r) => { r.resume(); ok({ status: r.statusCode, challenge: r.headers['www-authenticate'] || '', location: r.headers.location || '' }); }).on('error', fail));
+const challenge = async (mode) => (await get('/new', mode)).challenge;
 check('401 without Sec-Fetch-Mode (curl) asks for Basic login', /^Basic /.test(await challenge()));
 // a background request (fetch/XHR, e.g. from a public player) must not pop up a login dialog
 check('401 on a background request has no login challenge', (await challenge('cors')) === '');
+// a page load logs in at /login, so the browser reuses the login for the whole server (not only /edit/)
+const isRedirect = (r, location) => [302, 303].includes(r.status) && r.location === location;
+const nav = await get('/edit/x?a=1', 'navigate');
+check('anonymous page load -> redirect to /login?next=', isRedirect(nav, '/login?next=' + encodeURIComponent('/edit/x?a=1')), `${nav.status} ${nav.location}`);
+const login = await get('/login?next=%2Fedit%2Fx', 'navigate');
+check('anonymous /login -> 401 asking for Basic login', login.status === 401 && /^Basic /.test(login.challenge), `${login.status} ${login.challenge}`);
+const back = await get('/login?next=' + encodeURIComponent('/edit/x?a=1'), 'navigate', ADMIN);
+check('admin /login -> redirect to next', isRedirect(back, '/edit/x?a=1'), `${back.status} ${back.location}`);
+for (const next of ['//evil.example', 'https://evil.example', '/\\evil', '/\t/evil.example', 'evil']) {
+  const r = await get('/login?next=' + encodeURIComponent(next), 'navigate', ADMIN);
+  check(`admin /login with unsafe next ${JSON.stringify(next)} -> redirect to /`, isRedirect(r, '/'), `${r.status} ${r.location}`);
+}
 
 // 2. Admin: import with a chosen id, Bearer works too, bad ids are refused
 const id = 'pm-test-' + Date.now();
