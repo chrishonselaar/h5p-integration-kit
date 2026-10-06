@@ -198,6 +198,8 @@ Create `tool_config.json` with your LMS platform details:
 
 #### Moodle
 
+For a ready-made local Moodle 4.5 with this tool registered, see [`demo/moodle`](../../demo/moodle/README.md).
+
 1. Go to Site Administration > Plugins > External tool > Manage tools
 2. Click "configure a tool manually"
 3. Enter:
@@ -242,10 +244,12 @@ If not provided, users will see a content picker to choose content.
 
 Grades are sent to the LMS using LTI Assignment and Grade Services (AGS):
 
-1. H5P player sends xAPI completion event
-2. Tool receives via `/lti/webhook`
-3. Tool stores grade and sends to LMS AGS endpoint
-4. Grade appears in LMS gradebook
+1. H5P player sends an xAPI statement with a score
+2. Tool receives it at `/lti/webhook`. It ignores statements from questions inside a container
+   and keeps only the score for the whole content
+3. Tool stores the grade and posts it to the LMS's AGS line item. It uses the activity's own
+   line item if the LMS sends one, and otherwise finds or creates one for the resource link
+4. Grade appears in LMS gradebook; `sent_to_lms` in the webhook response says whether it was sent
 
 ## Files
 

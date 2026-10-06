@@ -26,6 +26,9 @@ from pylti1p3.contrib.flask import (
 from pylti1p3.tool_config import ToolConfJsonFile
 from pylti1p3.grade import Grade
 from pylti1p3.lineitem import LineItem
+from pylti1p3.registration import Registration
+from pylti1p3.service_connector import ServiceConnector
+from pylti1p3.assignments_grades import AssignmentsGradesService
 from werkzeug.exceptions import Forbidden
 from flask_cors import CORS
 
@@ -82,6 +85,11 @@ def init_db():
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
+    # Columns added later; ALTER keeps existing databases working
+    columns = {row['name'] for row in db.execute('PRAGMA table_info(lti_launches)')}
+    for column in ('client_id', 'ags_claim'):
+        if column not in columns:
+            db.execute(f'ALTER TABLE lti_launches ADD COLUMN {column} TEXT')
     # Store grades before sending to LMS
     db.execute('''
         CREATE TABLE IF NOT EXISTS grades (
@@ -215,12 +223,17 @@ def lti_launch():
     # Get Assignment and Grade Services (AGS) claim for grade passback
     ags_claim = launch_data.get('https://purl.imsglobal.org/spec/lti-ags/claim/endpoint', {})
 
+    # aud is the platform's client_id for this tool (a string, or a list with azp)
+    aud = launch_data.get('aud', '')
+    client_id = launch_data.get('azp') or (aud[0] if isinstance(aud, list) else aud)
+
     # Store launch info for grade passback
     db = get_db()
     db.execute('''
         INSERT OR REPLACE INTO lti_launches
-        (launch_id, h5p_content_id, user_id, resource_link_id, iss, ags_endpoint, ags_lineitems, ags_lineitem)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        (launch_id, h5p_content_id, user_id, resource_link_id, iss, ags_endpoint, ags_lineitems, ags_lineitem,
+         client_id, ags_claim)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
         launch_id,
         h5p_content_id,
@@ -229,7 +242,9 @@ def lti_launch():
         launch_data.get('iss', ''),
         json.dumps(ags_claim.get('scope', [])),
         ags_claim.get('lineitems', ''),
-        ags_claim.get('lineitem', '')
+        ags_claim.get('lineitem', ''),
+        client_id,
+        json.dumps(ags_claim) if ags_claim else None
     ))
     db.commit()
 
@@ -388,6 +403,13 @@ def lti_webhook():
     user_id = data.get('userId', 'anonymous')
     statement = data.get('statement', {})
 
+    # Questions inside a container (Question Set, Course Presentation...) send their own
+    # statements; only the statement about the whole content is the grade.
+    if statement.get('context', {}).get('contextActivities', {}).get('parent'):
+        return jsonify({'status': 'ignored', 'reason': 'sub-content statement'})
+    if 'score' not in statement.get('result', {}):
+        return jsonify({'status': 'ignored', 'reason': 'no score'})
+
     # Extract score
     result = statement.get('result', {})
     score_data = result.get('score', {})
@@ -413,21 +435,65 @@ def lti_webhook():
         return jsonify({'error': 'No matching LTI launch found'}), 404
 
     # Store grade
-    db.execute('''
+    cursor = db.execute('''
         INSERT INTO grades (launch_id, score, max_score)
         VALUES (?, ?, ?)
     ''', (launch['launch_id'], raw_score, max_score))
     db.commit()
 
-    # Attempt to send grade to LMS (simplified - full implementation needs message_launch)
     grade_result = {
         'status': 'stored',
         'launch_id': launch['launch_id'],
         'score': raw_score / max_score if max_score else 0,
-        'ags_available': bool(launch['ags_lineitem'])
+        'sent_to_lms': False
     }
 
+    try:
+        grade_result['sent_to_lms'] = send_grade_to_lms(launch, raw_score, max_score)
+    except Exception as e:
+        # Keep the stored grade; the LMS can be retried later
+        print(f'AGS grade passback failed for launch {launch["launch_id"]}: {e}')
+        grade_result['error'] = str(e)
+
+    if grade_result['sent_to_lms']:
+        db.execute('UPDATE grades SET sent_to_lms = 1 WHERE id = ?', (cursor.lastrowid,))
+        db.commit()
+
     return jsonify(grade_result)
+
+def send_grade_to_lms(launch, raw_score, max_score):
+    """
+    Send a score to the LMS gradebook with LTI Assignment and Grade Services (AGS).
+    Returns False when the launch has no AGS endpoint (e.g. the LMS doesn't accept grades).
+    """
+    if not launch['ags_claim'] or not launch['client_id']:
+        return False
+    ags_claim = json.loads(launch['ags_claim'])
+    if 'https://purl.imsglobal.org/spec/lti-ags/scope/score' not in ags_claim.get('scope', []):
+        return False
+
+    registration = get_tool_conf().find_registration_by_params(launch['iss'], launch['client_id'])
+    ags = AssignmentsGradesService(ServiceConnector(registration), ags_claim)
+
+    grade = Grade()
+    grade.set_score_given(raw_score) \
+        .set_score_maximum(max_score) \
+        .set_timestamp(datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S+0000')) \
+        .set_activity_progress('Completed') \
+        .set_grading_progress('FullyGraded') \
+        .set_user_id(launch['user_id'])
+
+    # Moodle sends the activity's own line item when "accept grades" is on; otherwise
+    # find or create one for this resource link.
+    lineitem = None
+    if not ags_claim.get('lineitem'):
+        lineitem = LineItem()
+        lineitem.set_tag('h5p-score') \
+            .set_score_maximum(max_score) \
+            .set_label('H5P') \
+            .set_resource_link_id(launch['resource_link_id'])
+    ags.put_grade(grade, lineitem)
+    return True
 
 # ============================================================================
 # JWKS Endpoint (Required for LTI 1.3)
@@ -439,15 +505,10 @@ def jwks():
     JSON Web Key Set endpoint.
     Returns the public key for the LMS to verify our signatures.
     """
-    tool_conf = get_tool_conf()
-    # Get first configured platform
-    config = tool_conf._config
-    if not config:
-        return jsonify({'keys': []})
-
-    # For simplicity, return empty - in production, generate proper JWKS
-    # See pylti1p3 documentation for proper key management
-    return jsonify({'keys': []})
+    # All platforms in tool_config.json share one key pair (public.key)
+    public_key_path = os.path.join(os.path.dirname(__file__), 'public.key')
+    with open(public_key_path) as f:
+        return jsonify({'keys': [Registration.get_jwk(f.read())]})
 
 # ============================================================================
 # Configuration Endpoints
