@@ -151,9 +151,17 @@ All examples receive xAPI scores at their `/webhook` endpoint:
 - `sample_lms/models.py` - Course, Activity models
 
 ### LTI Provider (examples/lti-provider/)
-- `app.py` - LTI 1.3 tool provider (~400 lines)
-- `tool_config.json` - LMS configuration (create this)
-- `private.key`, `public.key` - RSA keys (generate these)
+- `app.py` - LTI 1.3 tool: Dynamic Registration, Deep Linking, launch, AGS scores, CLI commands
+- `store.py` - database (SQLAlchemy; SQLite default, PostgreSQL via `DATABASE_URL`)
+- `templates/`, `static/` - pages for teachers, students, LMS admins
+- `tests/` - pytest (tenant isolation, tickets, scores)
+- `private.key`, `public.key` - RSA keys (created on first start)
+- Editor access on a protected H5P server: signed tickets with `H5P_TOOL_SECRET` (see h5p-server README)
+
+### Moodle demo (demo/moodle/)
+- `docker-compose.yml` - Moodle 4.5 + MariaDB + forwarder so Moodle reaches the tool on localhost:5001
+- `setup.sh` - Dynamic Registration + course/teacher/student; `demo.env` - demo settings
+- `e2e.mjs` - Playwright: teacher Deep Linking + editor, student answer, grade in gradebook
 
 ## Access Points
 

@@ -3,8 +3,8 @@
 #   docker compose up -d        # first start takes a few minutes (installs Moodle)
 #   open http://localhost:8080  # admin / Admin123!
 #
-# bitnamilegacy/* images are no longer updated by Bitnami. They are fine for a local
-# demo, not for production. Change the tag (e.g. 5.0) to show a Moodle upgrade.
+# bitnamilegacy/* images are no longer updated by Bitnami. They are fine for a local demo, not
+# for production. Set MOODLE_TAG (e.g. 5.0) to try another Moodle version.
 services:
   mariadb:
     image: bitnamilegacy/mariadb:11.4
@@ -32,11 +32,23 @@ services:
       - MOODLE_SITE_NAME=H5P LTI demo
       # The browser reaches Moodle at localhost:8080; Moodle uses this as its LTI issuer.
       - MOODLE_HOST=localhost:8080
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - moodle_data:/bitnami/moodle
       - moodledata_data:/bitnami/moodledata
     depends_on:
       - mariadb
+
+  # The browser reaches the tool at localhost:5001. Moodle fetches the tool's public keys from
+  # that same URL, but inside the Moodle container "localhost" is the container itself. This
+  # sidecar shares Moodle's network and forwards localhost:5001 to the tool on the host.
+  tool-forward:
+    image: alpine/socat
+    network_mode: service:moodle
+    command: TCP-LISTEN:5001,fork,reuseaddr TCP:host.docker.internal:5001
+    depends_on:
+      - moodle
 
 volumes:
   mariadb_data:

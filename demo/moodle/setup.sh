@@ -1,36 +1,31 @@
 #!/usr/bin/env bash
-# Registers examples/lti-provider in the demo Moodle and adds the Moodle platform to
-# examples/lti-provider/tool_config.json. Safe to run again.
+# Connects examples/lti-provider to the demo Moodle the way a Moodle admin would, with LTI
+# Dynamic Registration, and adds a course with a teacher and a student. Safe to run again.
 #
-#   demo/moodle/setup.sh [h5p_content_id]
+#   demo/moodle/setup.sh
+#
+# Needs: the tool running at $TOOL_URL (default http://localhost:5001), listening on all
+# interfaces (HOST=0.0.0.0) so Moodle can fetch its keys; see README.md.
 set -euo pipefail
 cd "$(dirname "$0")"
-TOOL_DIR=../../examples/lti-provider
 TOOL_URL=${TOOL_URL:-http://localhost:5001}
-CONTENT_ID=${1:-1331473450}
 CONTAINER=$(docker compose ps -q moodle)
+moodle() { docker exec -u daemon "$CONTAINER" /opt/bitnami/php/bin/php /tmp/moodle-setup.php "$@" 2>&1 | grep -v sendmail; }
 
-docker cp register-tool.php "$CONTAINER":/tmp/register-tool.php
-docker cp "$TOOL_DIR/public.key" "$CONTAINER":/tmp/tool-public.key
-OUT=$(docker exec -u daemon "$CONTAINER" /opt/bitnami/php/bin/php /tmp/register-tool.php \
-      "$TOOL_URL" /tmp/tool-public.key "$CONTENT_ID" | tail -1)
-echo "$OUT"
+docker cp moodle-setup.php "$CONTAINER":/tmp/moodle-setup.php >/dev/null
+COURSE=$(moodle site | tail -1)
 
-python3 - "$TOOL_DIR/tool_config.json" "$OUT" <<'PY'
-import json, sys
-path, out = sys.argv[1], json.loads(sys.argv[2])
-conf = json.load(open(path))
-conf[out['issuer']] = [{
-    'default': True,
-    'client_id': out['client_id'],
-    'deployment_ids': [out['deployment_id']],
-    'auth_login_url': out['auth_login_url'],
-    'auth_token_url': out['auth_token_url'],
-    'key_set_url': out['key_set_url'],
-    'private_key_file': 'private.key',
-    'public_key_file': 'public.key',
-}]
-json.dump(conf, open(path, 'w'), indent=2)
-print(f"tool_config.json: added {out['issuer']}")
-print(f"Course: {out['course_url']}  (teacher / Demo123!, student / Demo123!)")
-PY
+if docker exec -u daemon "$CONTAINER" /opt/bitnami/php/bin/php -r 'define("CLI_SCRIPT",1); require "/opt/bitnami/moodle/config.php"; exit($DB->record_exists("lti_types", ["name" => "H5P"]) ? 0 : 1);'; then
+  echo "Tool already registered."
+else
+  # The admin pastes $TOOL_URL/lti/register under Manage tools and clicks "Add LTI Advantage";
+  # Moodle then opens this URL (with a registration token) and the tool registers itself.
+  REG_URL=$(moodle registration-url "$TOOL_URL/lti/register" | tail -1)
+  curl -sf -o /dev/null "$REG_URL" || { echo "Registration failed: is the tool running at $TOOL_URL?"; exit 1; }
+  echo "Tool registered by Dynamic Registration."
+fi
+moodle activate
+
+echo
+echo "Moodle:  http://localhost:8080   (admin / Admin123!, teacher / Demo123!, student / Demo123!)"
+echo "Course:  $COURSE"

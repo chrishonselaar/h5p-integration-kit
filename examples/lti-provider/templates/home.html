@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block title %}H5P for your LMS{% endblock %}
+{% block content %}
+<h1>H5P for your LMS</h1>
+<p class="lead">Interactive H5P content in Moodle, Canvas or Brightspace, through the LMS's standard External tool (LTI 1.3). Nothing is installed in the LMS.</p>
+
+<h2>Connect your LMS</h2>
+<p>Give your LMS this registration URL{% if needs_key %}, with the key you received from us added as <code>?key=…</code>{% endif %}:</p>
+<p><code>{{ registration_url }}</code></p>
+<p class="meta">Moodle 4.1 or later: <em>Site administration → Plugins → Activity modules → External tool → Manage tools</em>, paste the URL under <em>Tool URL</em>, choose <em>Add LTI Advantage</em>, then <em>Activate</em> the new tool. Without Dynamic Registration, use the values in <a href="{{ url_for('lti_config') }}">/lti/config</a>.</p>
+{% endblock %}

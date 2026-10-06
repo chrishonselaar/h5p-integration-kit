@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% block title %}Choose H5P content{% endblock %}
+{% block content %}
+{% if deep_link %}
+<h1>Choose the H5P content for this activity</h1>
+<p class="lead">Pick existing content or create new content. Students get the content you choose, and their score goes to the gradebook.</p>
+{% else %}
+<h1>H5P content of your organisation</h1>
+<p class="lead">This activity has no content yet. To give it content, edit the activity in your course and choose <em>Select content</em>.</p>
+{% endif %}
+
+<div class="toolbar">
+  <a class="button primary" href="{{ url_for('open_editor', launch=launch_id) }}" target="h5p-editor"
+     onclick="return openEditor(this.href)">Create new content</a>
+</div>
+
+{% if contents %}
+<ul class="items">
+  {% for c in contents %}
+  <li{% if c.content_id == new_id %} class="new"{% endif %}>
+    <div>
+      <span class="title">{{ c.title or 'Untitled' }}</span>{% if c.content_id == new_id %}<span class="badge">New</span>{% endif %}
+      <div class="meta">Created {{ c.created_at.strftime('%d %b %Y') if c.created_at else '' }}</div>
+    </div>
+    <div class="actions">
+      <a class="button" href="{{ url_for('preview', content_id=c.content_id, launch=launch_id) }}" target="_blank" rel="noopener">Preview</a>
+      <a class="button" href="{{ url_for('open_editor', launch=launch_id, content=c.content_id) }}" target="h5p-editor"
+         onclick="return openEditor(this.href)">Edit</a>
+      {% if deep_link %}
+      <form method="post" action="{{ url_for('deep_link_select') }}">
+        <input type="hidden" name="launch" value="{{ launch_id }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <input type="hidden" name="content_id" value="{{ c.content_id }}">
+        <button class="button primary" type="submit">Use this</button>
+      </form>
+      {% endif %}
+    </div>
+  </li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="empty">Your organisation has no H5P content yet. Choose <em>Create new content</em> to make the first one.</p>
+{% endif %}
+
+<script>
+  // The editor opens in its own window; when it saves, it calls h5pSaved() here.
+  function openEditor(url) {
+    var w = window.open(url, 'h5p-editor', 'width=1200,height=850');
+    return !w;   // fall back to a normal link if the window was blocked
+  }
+  window.h5pSaved = function (contentId) {
+    var url = new URL(window.location.href);
+    if (contentId) url.searchParams.set('new', contentId);
+    window.location.replace(url.toString());
+  };
+</script>
+{% endblock %}

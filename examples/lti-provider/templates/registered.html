@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block title %}Connected{% endblock %}
+{% block content %}
+<h1>H5P is connected</h1>
+<p class="lead">{{ issuer }} can now use H5P. In Moodle, activate the tool under <em>Manage tools</em>. Teachers then find it in the activity chooser.</p>
+<script>
+  // LTI Dynamic Registration: tell the LMS the registration is finished
+  (window.opener || window.parent).postMessage({ subject: 'org.imsglobal.lti.close' }, '*');
+</script>
+{% endblock %}

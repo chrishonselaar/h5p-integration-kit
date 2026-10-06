@@ -142,10 +142,14 @@ The [Django example](examples/django/) includes:
 
 ### LTI 1.3 Tool Provider
 
-The [LTI provider](examples/lti-provider/) allows external LMS platforms to:
-- Launch H5P content via LTI 1.3
-- Return grades to LMS gradebook
-- Works with Moodle, Canvas, Blackboard, etc.
+The [LTI tool](examples/lti-provider/) brings H5P into Moodle, Canvas, Brightspace and other LMSes
+through their standard External tool, with no plugin in the LMS:
+- LMS admins connect it by one URL (LTI Dynamic Registration)
+- Teachers pick or create H5P content when they add an activity (LTI Deep Linking)
+- Scores go to the LMS gradebook (Assignment and Grade Services)
+- Each connected LMS sees only its own content; SQLite or PostgreSQL
+
+A local Moodle 4.5 with the whole flow is in [demo/moodle](demo/moodle/).
 
 ## H5P Server
 

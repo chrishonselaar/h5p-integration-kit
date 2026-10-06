@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}Saved{% endblock %}
+{% block content %}
+<h1>{% if content_id %}Saved{% else %}Closed{% endif %}</h1>
+<p class="lead">You can close this window.</p>
+<script>
+  if (window.opener && window.opener.h5pSaved) {
+    window.opener.h5pSaved({{ content_id|tojson }});
+    window.close();
+  }
+</script>
+{% endblock %}

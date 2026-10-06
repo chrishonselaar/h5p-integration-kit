@@ -1,0 +1,24 @@
+{% extends 'base.html' %}
+{% block body %}
+<div class="player">
+  {% if preview %}<div class="bar">Preview. Your answers here do not count as a grade.</div>{% endif %}
+  <iframe src="{{ h5p_server }}/play/{{ content_id }}" title="H5P content" allow="fullscreen; autoplay"></iframe>
+</div>
+{% if not preview %}
+<script>
+  // The H5P player (another origin) posts its xAPI results to this page; the tool sends the
+  // score to the LMS. Only messages from the H5P server count.
+  window.addEventListener('message', function (event) {
+    if (event.origin !== {{ h5p_origin|tojson }}) return;
+    var data = event.data || {};
+    if (data.type !== 'h5p-result' || !data.statement || !data.statement.result) return;
+    fetch({{ url_for('lti_score')|tojson }}, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': {{ csrf|tojson }} },
+      body: JSON.stringify({ launch_id: {{ launch_id|tojson }}, contentId: data.contentId, statement: data.statement })
+    }).catch(function (err) { console.error('Score not sent', err); });
+  });
+</script>
+{% endif %}
+{% endblock %}

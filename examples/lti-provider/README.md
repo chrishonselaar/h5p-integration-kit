@@ -1,308 +1,142 @@
-# H5P LTI 1.3 Tool Provider
+# H5P LTI 1.3 Tool
 
-An LTI 1.3 Tool Provider that allows external LMS platforms (Moodle, Canvas, Blackboard, etc.) to launch H5P content and receive grades via the Assignment and Grade Services (AGS).
+Puts H5P content from the kit's H5P server into Moodle, Canvas, Brightspace or any other LMS
+with LTI 1.3. Nothing is installed in the LMS: it uses its standard "External tool". So an LMS
+upgrade cannot break it, as long as the LMS keeps supporting the LTI standard.
 
-## What is LTI?
+What each person does:
 
-**Learning Tools Interoperability (LTI)** is a standard for integrating external tools with Learning Management Systems. LTI 1.3 uses modern OAuth 2.0 / OpenID Connect authentication.
+| Who | What they do | LTI feature |
+|-----|--------------|-------------|
+| LMS admin | Pastes one registration URL; the LMS and the tool exchange keys | Dynamic Registration |
+| Teacher | Adds an activity, picks existing H5P content or creates new content in the H5P editor | Deep Linking |
+| Student | Opens the activity and plays the content; the score lands in the gradebook | Resource link launch, Assignment and Grade Services (AGS) |
 
-This tool provider allows any LTI 1.3 compliant LMS to:
-1. Launch H5P content in an iframe
-2. Receive completion scores back to the gradebook
+Every connected LMS (a *platform*) is a separate tenant. Its teachers see and edit only the
+content made from that platform.
 
-## Features
+A local Moodle with all of this set up is in [`demo/moodle`](../../demo/moodle/README.md).
 
-- **LTI 1.3 Compliant**: Works with Moodle, Canvas, Blackboard, Brightspace, etc.
-- **OIDC Authentication**: Secure OAuth 2.0 / OpenID Connect flow
-- **Grade Passback**: Sends scores to LMS via Assignment and Grade Services
-- **Content Picker**: Select H5P content if not specified in launch
-
-## Quick Start
-
-### Prerequisites
-
-- Python 3.8+
-- H5P server running at `http://localhost:3000`
-- An LTI 1.3 capable LMS (Moodle, Canvas, etc.)
-
-### Installation
+## Run it
 
 ```bash
-# From this directory
 pip install -r requirements.txt
-
-# Generate RSA keys for LTI signing
-openssl genrsa -out private.key 2048
-openssl rsa -in private.key -pubout -out public.key
-
-# Configure your LMS details (see Configuration section)
-# Edit tool_config.json
-
-# Run the tool provider
-python app.py
+python app.py                  # http://localhost:5001
 ```
 
-### LTI Endpoints
-
-| Endpoint | Purpose |
-|----------|---------|
-| `/lti/login` | OIDC Login Initiation URL |
-| `/lti/launch` | Target Link URI (Launch URL) |
-| `/.well-known/jwks.json` | JSON Web Key Set |
-| `/lti/config` | Tool configuration (JSON) |
-| `/lti/webhook` | Receives xAPI scores from H5P |
-
-## Testing with Saltire (Quick Test)
-
-[Saltire](https://saltire.lti.app/) is a free LTI testing platform - no signup required. It's the fastest way to test your LTI tool provider.
-
-### Step 1: Start Your Servers
+On first start the tool creates its RSA key pair (`private.key`, `public.key`) and its database
+(SQLite `lti_data.db`). For production, run it with gunicorn behind https:
 
 ```bash
-# Terminal 1: H5P Server
-cd h5p-server && npm start
-
-# Terminal 2: LTI Provider
-cd examples/lti-provider && python app.py
+gunicorn -w 4 -b 0.0.0.0:5001 app:app
 ```
 
-### Step 2: Expose Your Local Servers (Required)
+### Settings
 
-Saltire needs to reach your local servers. You need **two tunnels** - one for the LTI provider and one for the H5P server:
+| Variable | Default | What it is |
+|----------|---------|------------|
+| `APP_URL` | `http://localhost:5001` | The tool's public URL. The LMS stores it at registration, so choose it before you register |
+| `H5P_SERVER` | `http://localhost:3000` | The H5P server as the browser sees it (player and editor) |
+| `H5P_TOOL_SECRET` | *(unset)* | The same secret as the H5P server's `H5P_TOOL_SECRET`. The tool signs editor tickets with it, so teachers can create and edit content on a protected H5P server. Unset only works with an open (development) H5P server |
+| `H5P_API_TOKEN` | *(unset)* | The H5P server's admin password, for the `assign-content` command |
+| `DATABASE_URL` | `sqlite:///lti_data.db` | `postgresql+psycopg://user:password@host/db` for PostgreSQL. Tables are created on start |
+| `SECRET_KEY` | *(a fixed development value)* | Signs the session cookie and form tokens. **Set a long random value in production** |
+| `LTI_REGISTRATION_KEY` | *(unset)* | When set, the registration URL only works with `?key=<value>`, so only LMSes you gave the key to can connect |
+| `HOST`, `PORT` | `127.0.0.1`, `5001` | Where `python app.py` listens |
+
+The H5P server should run in protected mode (`H5P_ADMIN_PASSWORD`) with the same
+`H5P_TOOL_SECRET`. Then playing content is public, and editing is only possible with the admin
+password or a ticket from this tool.
+
+## Connect an LMS
+
+**With Dynamic Registration** (Moodle 4.1+, Canvas, Brightspace, Sakai): give the LMS admin
+`APP_URL/lti/register`, with `?key=…` if you set `LTI_REGISTRATION_KEY`.
+
+- In Moodle: *Site administration → Plugins → Activity modules → External tool → Manage tools*.
+  Paste the URL under *Tool URL*, choose *Add LTI Advantage*, then *Activate* the new tool.
+- To have teachers find it in the activity chooser, set the tool's *Tool configuration usage*
+  to "Show in activity chooser and as a preconfigured tool".
+
+**By hand** (an LMS without Dynamic Registration): register the tool with the values from
+`APP_URL/lti/config`, then tell the tool about the LMS:
 
 ```bash
-# Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
-
-# Terminal 3: Tunnel for LTI Provider
-cloudflared tunnel --url http://localhost:5001
-# Copy this URL for Saltire config (e.g., https://abc-random.trycloudflare.com)
-
-# Terminal 4: Tunnel for H5P Server
-cloudflared tunnel --url http://localhost:3000
-# Copy this URL for H5P_BASE_URL (e.g., https://xyz-random.trycloudflare.com)
+flask --app app add-platform --issuer https://lms.example.org --client-id <id> --deployment-id <id> \
+  --auth-login-url https://lms.example.org/mod/lti/auth.php \
+  --auth-token-url https://lms.example.org/mod/lti/token.php \
+  --key-set-url https://lms.example.org/mod/lti/certs.php
 ```
 
-Then restart the servers with the tunnel URLs:
+Platforms in an older `tool_config.json` are imported into the database on start.
+
+## How it works
+
+```
+LMS ──(OIDC login, signed launch)──▶ /lti/login, /lti/launch
+      teacher, Deep Linking ──▶ picker ──▶ /lti/editor ──(signed ticket)──▶ H5P server editor
+                                   ◀── /lti/editor/done (signed by the H5P server) records the owner
+                          picker ──"Use this"──▶ signed Deep Linking response ──▶ LMS creates the activity
+      student ──▶ player page ──iframe──▶ H5P server /play/<id>
+                  player page ◀──postMessage (xAPI result)── H5P player
+                  player page ──▶ /lti/score ──AGS──▶ LMS gradebook
+```
+
+- **Scores.** The H5P player posts its xAPI results to the tool's player page with `postMessage`.
+  The page posts them to `/lti/score`, which only accepts a launch from the same browser session,
+  with a token bound to that launch, for the content of that launch. Only the score for the
+  whole content counts, not the scores of questions inside a container. Then the tool sends it to
+  the activity's line item with AGS. A grade the LMS did not accept stays in the `scores` table:
+  `flask --app app retry-grades` sends it again.
+- **As with every H5P integration, the score is computed in the browser.** A student who
+  manipulates their own browser can report a higher score for themselves (Moodle's own H5P
+  plugins have the same limit). They cannot report scores for other students or other
+  activities. Don't use H5P scores for high-stakes exams.
+- **Tenants.** The `contents` table records which platform owns which content. The picker,
+  preview, editor and Deep Linking only show or accept that platform's content. Content that
+  belongs to no platform (e.g. imported by the H5P server admin) can be played, and given to a
+  platform with `flask --app app assign-content <content_id> <platform_id>`.
+- **Sessions.** The LMS shows the tool in an iframe on another site, so the session cookie is
+  `SameSite=None; Secure`. That needs https (or `localhost`) in the browser.
+
+## Endpoints
+
+| Endpoint | For |
+|----------|-----|
+| `/lti/register` | Dynamic Registration (LMS admin) |
+| `/lti/login`, `/lti/launch` | OIDC login and launch (the LMS) |
+| `/.well-known/jwks.json` | The tool's public key (the LMS checks grade and Deep Linking messages with it) |
+| `/lti/picker`, `/lti/deep-link`, `/lti/preview/<id>`, `/lti/editor`, `/lti/editor/done` | Teachers, within a launch |
+| `/lti/score` | The player page, within a launch |
+| `/lti/config` | Values for registering by hand |
+| `/health` | Monitoring |
+
+## Commands
 
 ```bash
-# H5P Server (use Docker or native)
-H5P_BASE_URL=https://xyz-random.trycloudflare.com docker compose up -d h5p-server
-
-# LTI Provider
-H5P_SERVER=https://xyz-random.trycloudflare.com APP_URL=https://abc-random.trycloudflare.com python app.py
+flask --app app list-platforms
+flask --app app add-platform ...           # see above
+flask --app app assign-content <content_id> <platform_id>
+flask --app app retry-grades               # e.g. from cron every 15 minutes
 ```
 
-> **Note**: Avoid ngrok free tier - its interstitial warning page breaks iframes and LTI launches.
-
-### Step 3: Configure Saltire Platform
-
-1. Go to https://saltire.lti.app/platform
-2. Click **"Security Model"** in the left sidebar
-3. In the **Security Model** section at the top, set:
-
-| Saltire Field | Your Tool Value |
-|---------------|-----------------|
-| Message URL | `https://YOUR-TUNNEL-URL/lti/launch` |
-
-4. Expand **"Tool Details"** section below and enter:
-
-| Saltire Field | Your Tool Value |
-|---------------|-----------------|
-| Initiate login URL | `https://YOUR-TUNNEL-URL/lti/login` |
-| Redirection URI(s) | `https://YOUR-TUNNEL-URL/lti/launch` |
-| Public keyset URL | `https://YOUR-TUNNEL-URL/.well-known/jwks.json` |
-
-5. Click **"Fetch"** next to Public keyset URL to load your tool's public key
-6. Click **"Save"**
-
-### Step 4: Configure Your Tool
-
-Copy values from Saltire's **"Platform Details"** section into `tool_config.json`:
-
-| Saltire Field | tool_config.json Key |
-|---------------|---------------------|
-| Platform/Issuer ID | (use as the top-level key) |
-| Client ID | `client_id` |
-| Deployment ID | `deployment_ids` (as array) |
-| Authentication request URL | `auth_login_url` |
-| Access Token service URL | `auth_token_url` |
-| Public keyset URL | `key_set_url` |
-
-Example `tool_config.json`:
-
-```json
-{
-  "https://saltire.lti.app/platform": [{
-    "default": true,
-    "client_id": "saltire.lti.app",
-    "deployment_ids": ["YOUR_DEPLOYMENT_ID"],
-    "auth_login_url": "https://saltire.lti.app/platform/auth",
-    "auth_token_url": "https://saltire.lti.app/platform/token/YOUR_TOKEN_ID",
-    "key_set_url": "https://saltire.lti.app/platform/jwks/YOUR_JWKS_ID",
-    "private_key_file": "private.key",
-    "public_key_file": "public.key"
-  }]
-}
-```
-
-**Important**: Restart the tool after changing config: `python app.py`
-
-### Step 5: Test the Launch
-
-1. In Saltire, click **"Connect"** button (top right)
-2. Select **"Perform launch"**
-3. You should see the H5P content picker
-4. Select content and interact with it
-5. Grades should pass back to Saltire after completing H5P activities
-
-### Troubleshooting Saltire
-
-- **"Invalid redirect"**: Make sure tunnel URL matches exactly in both configs
-- **"JWT validation failed"**: Restart app.py after changing tool_config.json
-- **Tunnel URL changed**: Cloudflared URLs change on restart - update both configs
-
----
-
-## Configuration
-
-### 1. Generate RSA Keys
+## Tests
 
 ```bash
-# Generate private key
-openssl genrsa -out private.key 2048
-
-# Extract public key
-openssl rsa -in private.key -pubout -out public.key
+pip install pytest
+pytest tests                                                         # SQLite
+DATABASE_URL=postgresql+psycopg://user:pw@localhost/db pytest tests  # PostgreSQL
 ```
 
-### 2. Configure tool_config.json
-
-Create `tool_config.json` with your LMS platform details:
-
-```json
-{
-  "https://your-lms.edu": [{
-    "default": true,
-    "client_id": "client-id-from-lms",
-    "deployment_ids": ["deployment-id-from-lms"],
-    "auth_login_url": "https://your-lms.edu/mod/lti/auth.php",
-    "auth_token_url": "https://your-lms.edu/mod/lti/token.php",
-    "key_set_url": "https://your-lms.edu/mod/lti/certs.php",
-    "private_key_file": "private.key",
-    "public_key_file": "public.key"
-  }]
-}
-```
-
-### 3. Register Tool in Your LMS
-
-#### Moodle
-
-For a ready-made local Moodle 4.5 with this tool registered, see [`demo/moodle`](../../demo/moodle/README.md).
-
-1. Go to Site Administration > Plugins > External tool > Manage tools
-2. Click "configure a tool manually"
-3. Enter:
-   - Tool URL: `http://your-domain:5001/lti/launch`
-   - LTI version: LTI 1.3
-   - Public key type: Keyset URL
-   - Public keyset: `http://your-domain:5001/.well-known/jwks.json`
-   - Initiate login URL: `http://your-domain:5001/lti/login`
-   - Redirection URI(s): `http://your-domain:5001/lti/launch`
-
-#### Canvas
-
-1. Go to Admin > Developer Keys > + Developer Key > + LTI Key
-2. Configure with the same endpoints
-
-## LTI Launch Flow
-
-```
-1. User clicks H5P activity in LMS
-2. LMS redirects to /lti/login (OIDC initiation)
-3. Tool provider redirects to LMS auth endpoint
-4. User authenticates with LMS
-5. LMS POST to /lti/launch with JWT
-6. Tool validates JWT and extracts user/content info
-7. H5P player shown in iframe
-8. User completes activity
-9. H5P sends score to /lti/webhook
-10. Tool sends grade to LMS via AGS
-```
-
-## Custom Parameters
-
-Pass the H5P content ID in the LTI launch custom parameters:
-
-```
-h5p_content_id=your-content-id
-```
-
-If not provided, users will see a content picker to choose content.
-
-## Grade Passback
-
-Grades are sent to the LMS using LTI Assignment and Grade Services (AGS):
-
-1. H5P player sends an xAPI statement with a score
-2. Tool receives it at `/lti/webhook`. It ignores statements from questions inside a container
-   and keeps only the score for the whole content
-3. Tool stores the grade and posts it to the LMS's AGS line item. It uses the activity's own
-   line item if the LMS sends one, and otherwise finds or creates one for the resource link
-4. Grade appears in LMS gradebook; `sent_to_lms` in the webhook response says whether it was sent
+The tests cover tenant isolation, teacher-only pages, editor tickets and the score endpoint,
+with two simulated platforms. The full flow in a real Moodle is `demo/moodle/e2e.mjs`.
 
 ## Files
 
 ```
-examples/lti-provider/
-├── app.py              # Flask LTI tool provider
-├── requirements.txt    # Python dependencies
-├── tool_config.json    # LMS configuration (create this)
-├── private.key         # RSA private key (generate this)
-├── public.key          # RSA public key (generate this)
-├── lti_data.db         # SQLite database (auto-created)
-└── README.md           # This file
+app.py            routes, LTI handling, commands
+store.py          database (platforms, launches, scores, contents, cache)
+templates/        pages for teachers, students and LMS admins
+static/tool.css
+tests/            pytest
 ```
-
-## Environment Variables
-
-```bash
-SECRET_KEY=your-secret-key          # Flask session secret
-H5P_SERVER=http://localhost:3000    # H5P server URL
-APP_URL=http://localhost:5001       # This tool's URL
-```
-
-## Security Notes
-
-- **Production**: Use HTTPS for all endpoints
-- **Keys**: Keep `private.key` secret, never commit to git
-- **Sessions**: Use Redis or database-backed sessions in production
-- **Validation**: The tool validates all LTI messages using JWT signatures
-
-## Troubleshooting
-
-### "Invalid launch"
-- Check that `tool_config.json` has correct LMS details
-- Verify client_id and deployment_ids match LMS configuration
-
-### "JWKS validation failed"
-- Regenerate RSA keys
-- Ensure public key is correctly registered in LMS
-
-### "No grade passback"
-- Verify LMS has AGS enabled for the tool
-- Check that tool has score scope in LMS configuration
-
-## LMS-Specific Notes
-
-### Moodle
-- Requires Moodle 3.7+ for LTI 1.3
-- Enable "Accept grades from the tool" in tool settings
-
-### Canvas
-- Enable "Privacy: Send User Data" if needed
-- Configure scopes in Developer Key settings
-
-### Blackboard
-- Use Blackboard Learn REST API for additional features
-- Configure placement to enable deep linking
