@@ -83,6 +83,7 @@ Environment variables:
 | `H5P_ADMIN_PASSWORD` | *(unset)* | Switches on **protected mode** (below). Unset means open mode: no login anywhere, for development only |
 | `H5P_ADMIN_USER` | `admin` | User name for the admin login in protected mode |
 | `H5P_SESSION_HOURS` | `12` | How long a login on the login page lasts (protected mode) |
+| `H5P_TOOL_SECRET` | *(unset)* | Secret shared with an LTI tool (`examples/lti-provider`). Lets the tool open the editor for a teacher with a signed ticket, without the admin login; see *Editor tickets* below. Unset means no tickets |
 | `H5P_TRUST_PROXY` | *(one hop from a loopback/private address)* | Which proxies' `X-Forwarded-For` the server trusts for the client's address (Express `trust proxy` syntax); used to slow down wrong logins per address |
 | `H5P_EXTRA_SUBCONTENT` | *(unset)* | Path to a JSON file that lets containers accept extra content types, e.g. `{"H5P.Column": ["H5P.DeepZoomPage 0.1"], "H5P.QuestionSet": ["H5P.DeepZoomQuestion 0.1"]}`. H5P.Column, H5P.QuestionSet and similar containers only allow the sub-content types listed in their `semantics.json`; the editor removes any other type on save. Unset means stock behaviour |
 | `H5P_EDITOR_ASSETS` | *(unset)* | Path to a folder served at `/editor-assets/`, for files that editor widgets read, e.g. a media catalogue. In protected mode it needs the admin login, like the editor. Unset means no such route |
@@ -117,7 +118,15 @@ Import content with a fixed id (for example from a converter), so its public URL
 curl -H "Authorization: Bearer $H5P_ADMIN_PASSWORD" -F file=@item.h5p "https://h5p.example.org/api/import?contentId=80222"
 ```
 
-Tests: `node test/protected-mode.mjs <baseUrl> <password> <package.h5p>` against a protected server, and `node test/escaping.mjs <baseUrl> <contentId>` against an open one.
+### Editor tickets (for an LTI tool)
+
+Teachers who create content from their LMS don't get the admin password. Instead the LTI tool (`examples/lti-provider`), which shares `H5P_TOOL_SECRET` with this server, sends the teacher's browser to `GET /editor/start?ticket=…`:
+
+- **The ticket** is `<payload>.<signature>`. The payload is base64url JSON with `scope` (`new`, or `edit` with a `contentId`), `sub`, `returnUrl`, `jti` and `exp`. The signature is HMAC-SHA256 with the secret over `h5p-editor-ticket.<payload>`. A ticket is valid for at most 10 minutes and works once.
+- **It becomes an editor session** (cookie `h5p_editor`, or `__Host-h5p_editor` on https; HttpOnly, SameSite=Lax, 2 hours). The session allows only its scope: the editor page and its saves for new content, or for that one content id, plus the editor's own requests. It does not allow installing or uploading libraries, other content, the content list, deleting or importing. Logging out of the admin account, or a new password, ends editor sessions too.
+- **After a save**, the editor returns to the ticket's `returnUrl` (never one from the query string) with `contentId`, `title` and `sig`, the HMAC of `h5p-editor-saved.<jti>.<contentId>`. That's how the tool knows this server saved that content for that ticket, and records which LMS owns it.
+
+Tests: `node test/protected-mode.mjs <baseUrl> <password> <package.h5p>` against a protected server, `node test/editor-tickets.mjs <baseUrl> <password> <toolSecret> <package.h5p>` against a protected server with `H5P_TOOL_SECRET`, and `node test/escaping.mjs <baseUrl> <contentId>` against an open one.
 
 ## Integration Pattern
 

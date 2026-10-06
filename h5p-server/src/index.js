@@ -123,6 +123,64 @@ function fromOtherSite(req) {
     return !!origin && origin !== PUBLIC_ORIGIN;
 }
 
+// Editor tickets (H5P_TOOL_SECRET, shared with an LTI tool such as examples/lti-provider): the tool lets a teacher
+// open the editor without the admin login. It signs a ticket "<payload>.<HMAC>" (payload: base64url JSON with scope
+// "new" or "edit" + contentId, sub, returnUrl, jti, exp at most 10 minutes ahead); GET /editor/start?ticket=... uses it
+// once and sets an editor session cookie that allows only that scope: the editor page, its saves, and the editor's
+// own requests (no library installs, no other content, no admin API). After a save the return URL gets
+// sig=HMAC("h5p-editor-saved.<jti>.<contentId>"), so the tool knows this server saved that content for that ticket.
+const TOOL_SECRET = process.env.H5P_TOOL_SECRET || '';
+const EDITOR_COOKIE = SECURE_COOKIE ? '__Host-h5p_editor' : 'h5p_editor';
+const EDITOR_SECONDS = 2 * 3600;
+const toolMac = (message) => createHmac('sha256', TOOL_SECRET).update(message).digest('base64url');
+const editorKey = createHmac('sha256', TOOL_SECRET || 'unused').update('h5p-editor-session-v1').digest();
+const usedTickets = new Map();   // jti -> expiry (s): a ticket works once
+function signedJson(value, mac) {
+    const [payload, sig] = String(value || '').split('.');
+    if (!payload || !sig || !sameSecret(sig, mac(payload))) return null;
+    try { return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')); } catch { return null; }
+}
+function readTicket(ticket) {
+    if (!TOOL_SECRET) return null;
+    const t = signedJson(ticket, (p) => toolMac('h5p-editor-ticket.' + p));
+    if (!t || typeof t.jti !== 'string' || !Number.isInteger(t.exp) || t.exp <= now() || t.exp > now() + 600) return null;
+    if (!['new', 'edit'].includes(t.scope) || (t.scope === 'edit' && !/^[A-Za-z0-9_-]{1,64}$/.test(String(t.contentId)))) return null;
+    if (!httpUrlOrNull(t.returnUrl) || usedTickets.has(t.jti)) return null;
+    for (const [jti, exp] of usedTickets) if (exp <= now()) usedTickets.delete(jti);
+    usedTickets.set(t.jti, t.exp);
+    return t;
+}
+const editorMac = (payload) => createHmac('sha256', editorKey).update(payload).digest('base64url');
+function newEditorSession(t) {
+    const payload = Buffer.from(JSON.stringify({ scope: t.scope, contentId: t.scope === 'edit' ? String(t.contentId) : null, sub: String(t.sub || 'teacher'),
+        jti: t.jti, returnUrl: t.returnUrl, exp: now() + EDITOR_SECONDS, epoch: sessionEpoch })).toString('base64url');
+    return `${payload}.${editorMac(payload)}`;
+}
+function editorSession(req) {
+    if (!TOOL_SECRET) return null;
+    const e = signedJson(cookieValue(req, EDITOR_COOKIE), editorMac);
+    // Logging out of the admin account (or a new password) ends editor sessions too
+    return e && e.exp > now() && e.epoch === sessionEpoch ? e : null;
+}
+// What an editor session may request: its own editor page and saves, and what the H5P editor loads
+function editorMayUse(e, req) {
+    const p = req.path;
+    if (p === '/new') return e.scope === 'new';
+    if (p.startsWith('/edit/') || p.startsWith('/params/')) return e.scope === 'edit' && p.split('/')[2] === e.contentId && p.split('/').length === 3;
+    if (p === '/h5p/ajax') return !['library-install', 'library-upload'].includes(req.query.action);
+    return req.method === 'GET' && /^\/(h5p\/editor|temp-files|editor-assets)\//.test(p);
+}
+// The return URL after a save: an editor session goes back to its tool, with the save signed
+function savedReturnUrl(req, returnUrl, contentId, title) {
+    const target = req.editor ? req.editor.returnUrl : returnUrl;
+    if (!target) return null;
+    const url = new URL(target);
+    url.searchParams.set('contentId', contentId);
+    url.searchParams.set('title', title);
+    if (req.editor) url.searchParams.set('sig', toolMac(`h5p-editor-saved.${req.editor.jti}.${contentId}`));
+    return url.toString();
+}
+
 // Where /login sends the browser next: only a path on this server ("/x"; not "//host", "/\host" or a scheme)
 const localPathOr = (value, fallback) =>
     (typeof value === 'string' && /^\/(?![/\\])/.test(value) && !/[\x00-\x20\x7f]/.test(value) ? value : fallback);
@@ -162,6 +220,17 @@ ${note ? `<p class="note${message === 'out' ? ' out' : ''}" role="alert">${htmlT
 <button type="submit">${t.submit}</button>
 </form></body></html>`;
 }
+
+// The tool's ticket becomes an editor session for one scope (only with H5P_TOOL_SECRET)
+app.use((req, res, next) => { req.editor = editorSession(req); next(); });
+app.get('/editor/start', (req, res) => {
+    const t = readTicket(req.query.ticket);
+    res.set('Cache-Control', 'no-store');
+    if (!t) return res.status(403).type('text/plain').send('This editor link is not valid (any more). Open the editor again from your course.');
+    const target = t.scope === 'new' ? '/new' : `/edit/${encodeURIComponent(String(t.contentId))}`;
+    res.set('Set-Cookie', `${EDITOR_COOKIE}=${newEditorSession(t)}; Path=/; Max-Age=${EDITOR_SECONDS}; HttpOnly; SameSite=Lax${SECURE_COOKIE ? '; Secure' : ''}`)
+        .redirect(303, `${target}?returnUrl=${encodeURIComponent(t.returnUrl)}`);
+});
 
 if (PROTECTED) {
     const CHALLENGE = 'Basic realm="H5P admin", charset="UTF-8"';
@@ -214,6 +283,13 @@ if (PROTECTED) {
         if (sentCredentials && waitMinutes(req.ip)) {
             return res.status(429).set('Retry-After', String(waitMinutes(req.ip) * 60)).type('text/plain').send('Too many wrong logins; try again later');
         }
+        if (!isAdminRequest(req) && req.editor && editorMayUse(req.editor, req)) {
+            if (!isRead && fromOtherSite(req)) return res.status(403).type('text/plain').send('Cross-site request refused');
+            req.isAdmin = false;
+            res.set('Content-Security-Policy', "frame-ancestors 'self'");
+            return next();
+        }
+        req.editor = null;   // outside its scope an editor session counts for nothing
         if (!isAdminRequest(req)) {
             if (sentCredentials) failed(req.ip);
             const mode = req.get('sec-fetch-mode');
@@ -346,6 +422,10 @@ async function ensureDirectories() {
 
 // Create a simple user object (in production, get from session/auth)
 function createUser(req) {
+    if (req.editor) {
+        const id = 'editor-' + createHash('sha256').update(req.editor.sub).digest('hex').slice(0, 16);
+        return { id, name: 'Teacher', email: '', type: 'local' };
+    }
     if (PROTECTED) {
         return req.isAdmin
             ? { id: ADMIN_USER, name: 'Admin', email: '', type: 'local' }
@@ -402,10 +482,24 @@ let h5pEditor;
 let h5pPlayer;
 
 // Simple translation function (returns the key as-is for English)
+// Lumi's own texts ("namespace:key", e.g. "metadata-semantics:title") from the translation files it ships;
+// English when the language has no file or no such key, the key itself when English has none either
+const TRANSLATIONS_DIR = path.join(path.dirname(createRequire(import.meta.url).resolve('@lumieducation/h5p-server')), '..', 'assets', 'translations');
+const translationFiles = new Map();
+function translationFile(namespace, language) {
+    const file = path.join(TRANSLATIONS_DIR, namespace, `${language}.json`);
+    if (!translationFiles.has(file)) {
+        try { translationFiles.set(file, JSON.parse(readFileSync(file, 'utf8'))); } catch { translationFiles.set(file, null); }
+    }
+    return translationFiles.get(file);
+}
 function translationCallback(key, language) {
-    // For a real app, you'd load translations from files
-    // For now, just return the key
-    return key;
+    const i = key.indexOf(':');
+    if (i < 0 || !/^[a-z-]+$/.test(key.slice(0, i))) return key;
+    const lookup = (lang) => key.slice(i + 1).split('.').reduce((v, part) => (v && typeof v === 'object' ? v[part] : undefined),
+        translationFile(key.slice(0, i), lang));
+    const text = lookup(/^[a-z]{2}(-[A-Za-z]+)?$/.test(language || '') ? language : 'en') ?? lookup('en');
+    return typeof text === 'string' ? text : key;
 }
 
 async function initH5P() {
@@ -729,7 +823,7 @@ app.get('/edit/:contentId', async (req, res) => {
             user
         );
 
-        res.send(wrapEditorHtml(editorHtml, req.params.contentId, req.query.returnUrl));
+        res.send(wrapEditorHtml(editorHtml, req.params.contentId, req.editor ? req.editor.returnUrl : req.query.returnUrl));
     } catch (error) {
         console.error('Error rendering editor:', error);
         res.status(500).type('text/plain').send(`Error: ${error.message}`);
@@ -765,14 +859,7 @@ app.post('/edit/:contentId', fileUpload({ useTempFiles: true, tempFileDir: tempP
             user
         );
 
-        // Build redirect URL
-        let redirectUrl = `/edit/${contentId}`;
-        if (returnUrl) {
-            const url = new URL(returnUrl);
-            url.searchParams.set('contentId', contentId);
-            url.searchParams.set('title', metadata.title);
-            redirectUrl = url.toString();
-        }
+        const redirectUrl = savedReturnUrl(req, returnUrl, contentId, metadata.title) || `/edit/${contentId}`;
 
         // Always return JSON for the client-side interception to catch
         console.log('Content updated successfully, returning JSON with redirectUrl:', redirectUrl);
@@ -793,7 +880,7 @@ app.get('/new', async (req, res) => {
             user
         );
 
-        res.send(wrapEditorHtml(editorHtml, null, req.query.returnUrl));
+        res.send(wrapEditorHtml(editorHtml, null, req.editor ? req.editor.returnUrl : req.query.returnUrl));
     } catch (error) {
         console.error('Error rendering editor:', error);
         res.status(500).type('text/plain').send(`Error: ${error.message}`);
@@ -829,14 +916,7 @@ app.post('/new', fileUpload({ useTempFiles: true, tempFileDir: tempPath }), asyn
             user
         );
 
-        // Build redirect URL
-        let redirectUrl = `/edit/${savedId.id}`;
-        if (returnUrl) {
-            const url = new URL(returnUrl);
-            url.searchParams.set('contentId', savedId.id);
-            url.searchParams.set('title', metadata.title);
-            redirectUrl = url.toString();
-        }
+        const redirectUrl = savedReturnUrl(req, returnUrl, savedId.id, metadata.title) || `/edit/${savedId.id}`;
 
         // Always return JSON for the client-side interception to catch
         console.log('Content saved successfully, returning JSON with redirectUrl:', redirectUrl);
