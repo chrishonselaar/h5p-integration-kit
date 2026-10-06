@@ -4,5 +4,5 @@ requests>=2.31
 SQLAlchemy>=2.0
 # PostgreSQL driver (DATABASE_URL=postgresql+psycopg://...); not needed for SQLite
 psycopg[binary]>=3.1
-# Production web server: gunicorn -w 4 -b 0.0.0.0:5001 app:app
+# Production web server: gunicorn --preload -w 4 -b 0.0.0.0:5001 app:app
 gunicorn>=22

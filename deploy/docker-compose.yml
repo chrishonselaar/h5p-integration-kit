@@ -1,0 +1,63 @@
+# Production-style stack: H5P server (protected) + LTI tool + PostgreSQL.
+#
+#   cp .env.example .env   # fill in the URLs and secrets
+#   docker compose up -d --build
+#
+# Both services listen on 127.0.0.1 only; put an https reverse proxy in front (README.md).
+services:
+  h5p-server:
+    build: ../h5p-server
+    image: h5p-kit-server:latest        # own tag, so it never replaces another site's h5p-server image
+    restart: unless-stopped
+    environment:
+      - PORT=3000
+      - H5P_DATA_PATH=/data/h5p
+      - H5P_BASE_URL=${H5P_PUBLIC_URL}
+      - H5P_ADMIN_PASSWORD=${H5P_ADMIN_PASSWORD}
+      - H5P_TOOL_SECRET=${H5P_TOOL_SECRET}
+    volumes:
+      - h5p_data:/data/h5p
+      # H5P core and editor files from the repository, read-only
+      - ../h5p-server/h5p/core:/data/h5p/core:ro
+      - ../h5p-server/h5p/editor:/data/h5p/editor:ro
+    ports:
+      - "127.0.0.1:${H5P_PORT:-3000}:3000"
+
+  lti-tool:
+    build: ../examples/lti-provider
+    image: h5p-kit-lti-tool:latest
+    restart: unless-stopped
+    environment:
+      - APP_URL=${LTI_PUBLIC_URL}
+      - H5P_SERVER=${H5P_PUBLIC_URL}
+      - H5P_TOOL_SECRET=${H5P_TOOL_SECRET}
+      - H5P_API_TOKEN=${H5P_ADMIN_PASSWORD}
+      - SECRET_KEY=${LTI_SECRET_KEY}
+      - LTI_REGISTRATION_KEY=${LTI_REGISTRATION_KEY:-}
+      - DATABASE_URL=postgresql+psycopg://lti:${POSTGRES_PASSWORD}@postgres/lti
+    volumes:
+      - lti_keys:/keys
+    ports:
+      - "127.0.0.1:${LTI_PORT:-5001}:5001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=lti
+      - POSTGRES_DB=lti
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "lti"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  h5p_data:
+  lti_keys:
+  postgres_data:

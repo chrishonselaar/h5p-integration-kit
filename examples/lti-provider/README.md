@@ -28,7 +28,7 @@ On first start the tool creates its RSA key pair (`private.key`, `public.key`) a
 (SQLite `lti_data.db`). For production, run it with gunicorn behind https:
 
 ```bash
-gunicorn -w 4 -b 0.0.0.0:5001 app:app
+gunicorn --preload -w 4 -b 0.0.0.0:5001 app:app
 ```
 
 ### Settings
@@ -42,6 +42,7 @@ gunicorn -w 4 -b 0.0.0.0:5001 app:app
 | `DATABASE_URL` | `sqlite:///lti_data.db` | `postgresql+psycopg://user:password@host/db` for PostgreSQL. Tables are created on start |
 | `SECRET_KEY` | *(a fixed development value)* | Signs the session cookie and form tokens. **Set a long random value in production** |
 | `LTI_REGISTRATION_KEY` | *(unset)* | When set, the registration URL only works with `?key=<value>`, so only LMSes you gave the key to can connect |
+| `LTI_KEY_DIR` | the tool's folder | Where `private.key` and `public.key` are kept (created there on first start). Back this up: a new key pair means every LMS has to fetch the new public key |
 | `HOST`, `PORT` | `127.0.0.1`, `5001` | Where `python app.py` listens |
 
 The H5P server should run in protected mode (`H5P_ADMIN_PASSWORD`) with the same

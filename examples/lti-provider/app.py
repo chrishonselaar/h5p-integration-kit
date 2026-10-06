@@ -15,7 +15,7 @@ Run:
     python app.py
 
 Settings (environment variables, see README.md): APP_URL, H5P_SERVER, H5P_TOOL_SECRET,
-H5P_API_TOKEN, DATABASE_URL, SECRET_KEY, LTI_REGISTRATION_KEY, HOST, PORT.
+H5P_API_TOKEN, DATABASE_URL, SECRET_KEY, LTI_REGISTRATION_KEY, LTI_KEY_DIR, HOST, PORT.
 """
 
 import base64
@@ -71,8 +71,9 @@ CLAIM = 'https://purl.imsglobal.org/spec/lti/claim/'
 # Keys: one RSA key pair for all platforms (created on first start)
 # ============================================================================
 
-PRIVATE_KEY_FILE = os.path.join(BASE_DIR, 'private.key')
-PUBLIC_KEY_FILE = os.path.join(BASE_DIR, 'public.key')
+KEY_DIR = os.environ.get('LTI_KEY_DIR', BASE_DIR)
+PRIVATE_KEY_FILE = os.path.join(KEY_DIR, 'private.key')
+PUBLIC_KEY_FILE = os.path.join(KEY_DIR, 'public.key')
 
 
 def ensure_keys():
@@ -592,6 +593,8 @@ def retry_grades_command():
 ensure_keys()
 store.init_db()
 import_tool_config_json()
+# With gunicorn --preload this ran before the workers fork; each worker opens its own connections
+store.engine.dispose()
 
 if __name__ == '__main__':
     print(f'''
