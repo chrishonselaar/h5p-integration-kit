@@ -83,6 +83,8 @@ Environment variables:
 | `H5P_ADMIN_PASSWORD` | *(unset)* | Switches on **protected mode** (below). Unset means open mode: no login anywhere, for development only |
 | `H5P_ADMIN_USER` | `admin` | User name for the admin login in protected mode |
 | `H5P_EXTRA_SUBCONTENT` | *(unset)* | Path to a JSON file that lets containers accept extra content types, e.g. `{"H5P.Column": ["H5P.DeepZoomPage 0.1"], "H5P.QuestionSet": ["H5P.DeepZoomQuestion 0.1"]}`. H5P.Column, H5P.QuestionSet and similar containers only allow the sub-content types listed in their `semantics.json`; the editor removes any other type on save. Unset means stock behaviour |
+| `H5P_EDITOR_ASSETS` | *(unset)* | Path to a folder served at `/editor-assets/`, for files that editor widgets read, e.g. a media catalogue. In protected mode it needs the admin login, like the editor. Unset means no such route |
+| `H5P_PLUGINS` | *(unset)* | Comma-separated paths of ES modules that add routes. Each default-exports `async (app, ctx) => {}`; `ctx` has `express`, `protectedMode`, `dataPath` and `baseUrl`. They load after the kit's own routes and behind the same login (in protected mode only playing is public). Unset means no plugins |
 
 ### Protected mode
 

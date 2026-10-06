@@ -14,7 +14,7 @@ import cors from 'cors';
 import bodyParser from 'body-parser';
 import fileUpload from 'express-fileupload';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import fs from 'fs/promises';
 import { createHash, timingSafeEqual } from 'crypto';
 import * as H5P from '@lumieducation/h5p-server';
@@ -146,6 +146,9 @@ app.use((req, res, next) => {
 const h5pBasePath = H5P_DATA_PATH;
 
 // Serve H5P core, editor, content, libraries and temp files BEFORE other routes
+// Extra files for editor widgets (e.g. a media catalogue an editor library reads), served at /editor-assets/.
+// Not public: in protected mode they need the admin login, like the editor itself.
+if (process.env.H5P_EDITOR_ASSETS) app.use('/editor-assets', express.static(path.resolve(process.env.H5P_EDITOR_ASSETS)));
 app.use('/h5p/core', express.static(path.join(h5pBasePath, 'core')));
 app.use('/h5p/editor', express.static(path.join(h5pBasePath, 'editor')));
 app.use('/h5p/content', express.static(path.join(h5pBasePath, 'content')));
@@ -955,10 +958,23 @@ app.get('/health', (req, res) => {
 // Start Server
 // ============================================================================
 
+// Plugins (opt-in): H5P_PLUGINS lists ES modules, comma-separated. Each default-exports
+// `async (app, ctx) => {}` and adds its own routes. They load after the kit's routes and
+// behind the same protected-mode login: only GET /play and the player's files are public.
+async function loadPlugins() {
+    const list = (process.env.H5P_PLUGINS || '').split(',').map((s) => s.trim()).filter(Boolean);
+    for (const file of list) {
+        const mod = await import(pathToFileURL(path.resolve(file)).href);
+        await mod.default(app, { express, protectedMode: PROTECTED, dataPath: H5P_DATA_PATH, baseUrl: H5P_BASE_URL });
+        console.log(`Plugin loaded: ${file}`);
+    }
+}
+
 async function start() {
     try {
         await initH5P();
         await setupRoutes();
+        await loadPlugins();
         await addErrorHandlers();
 
         app.listen(PORT, () => {
