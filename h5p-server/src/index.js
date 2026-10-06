@@ -16,7 +16,9 @@ import fileUpload from 'express-fileupload';
 import path from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 import fs from 'fs/promises';
-import { createHash, timingSafeEqual } from 'crypto';
+import { readFileSync, writeFileSync } from 'fs';
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { BlockList } from 'net';
 import * as H5P from '@lumieducation/h5p-server';
 import { createRequire } from 'module';
 
@@ -27,6 +29,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
+// Behind a reverse proxy (nginx in front of a container) every request comes from a local or private address. Trust
+// exactly that one hop: req.ip is then the last X-Forwarded-For entry, the one the proxy added itself, never an entry
+// the client wrote (used to slow down wrong logins per address). A request straight from the internet is not trusted
+// at all. Nothing else in the server reads req.ip, req.protocol or req.hostname. H5P_TRUST_PROXY overrides (Express
+// `trust proxy` syntax).
+const PROXY_NETS = new BlockList();
+for (const [net, bits, type] of [['127.0.0.0', 8, 'ipv4'], ['10.0.0.0', 8, 'ipv4'], ['172.16.0.0', 12, 'ipv4'], ['192.168.0.0', 16, 'ipv4'],
+    ['169.254.0.0', 16, 'ipv4'], ['::1', 128, 'ipv6'], ['fc00::', 7, 'ipv6'], ['fe80::', 10, 'ipv6']]) PROXY_NETS.addSubnet(net, bits, type);
+const isProxyAddress = (addr) => {
+    const v4 = addr.startsWith('::ffff:') ? addr.slice(7) : addr;
+    try { return PROXY_NETS.check(v4, v4.includes(':') ? 'ipv6' : 'ipv4'); } catch { return false; }
+};
+app.set('trust proxy', process.env.H5P_TRUST_PROXY ?? ((addr, hop) => hop === 0 && isProxyAddress(addr)));
 
 // Configuration from environment
 const PORT = process.env.PORT || process.env.H5P_PORT || 3000;
@@ -38,9 +53,12 @@ const H5P_DATA_PATH = process.env.H5P_DATA_PATH || path.resolve(__dirname, '../h
 // Protected mode (opt-in, for a server on the internet): set H5P_ADMIN_PASSWORD.
 // Then only playing is public (GET /play/:id and the static files it loads);
 // everything else (editor, save, delete, import, content list, H5P ajax) needs the
-// admin login: HTTP Basic (user H5P_ADMIN_USER, default "admin") or
-// "Authorization: Bearer <H5P_ADMIN_PASSWORD>". Players are anonymous and keep no
-// user state. Without the variable the server behaves as before (open, for development).
+// admin login. People log in on the /login page (user H5P_ADMIN_USER, default "admin"),
+// which sets a signed session cookie for H5P_SESSION_HOURS (default 12); POST /logout
+// ends it, and changing the password ends every session. Scripts send
+// "Authorization: Bearer <H5P_ADMIN_PASSWORD>" or HTTP Basic instead. Players are
+// anonymous and keep no user state. Without the variable the server behaves as before
+// (open, for development).
 const ADMIN_USER = process.env.H5P_ADMIN_USER || 'admin';
 const ADMIN_PASSWORD = process.env.H5P_ADMIN_PASSWORD || '';
 const PROTECTED = ADMIN_PASSWORD !== '';
@@ -49,7 +67,44 @@ const PUBLIC_PATHS = /^\/(health$|play\/[^/]+$|h5p\/(core|libraries|content)\/)/
 
 const sameSecret = (a, b) => timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
 
+// Session cookie: "<issued, ms>.<expiry, s>.<HMAC of both>", keyed by the password, so a new password ends every
+// session. Logging out ends every session too (there is one shared account): only sessions issued after the last
+// logout count (the epoch is at least the newest issue time, so even one issued in the same millisecond ends). That moment is kept in <data path>/session-epoch, so it survives a restart. On https the cookie is
+// __Host-h5p_admin, which no other (sub)domain can set.
+const SECURE_COOKIE = PUBLIC_ORIGIN.startsWith('https:');
+const SESSION_COOKIE = SECURE_COOKIE ? '__Host-h5p_admin' : 'h5p_admin';
+const SESSION_SECONDS = Math.round((Number(process.env.H5P_SESSION_HOURS) || 12) * 3600);
+const sessionKey = createHmac('sha256', ADMIN_PASSWORD).update('h5p-admin-session-v3').digest();
+const signSession = (issued, expiry) => createHmac('sha256', sessionKey).update(`${issued}.${expiry}`).digest('base64url');
+const EPOCH_FILE = path.join(H5P_DATA_PATH, 'session-epoch');
+let sessionEpoch = 0, lastIssued = 0;
+try { sessionEpoch = Number(readFileSync(EPOCH_FILE, 'utf8')) || 0; } catch { /* no logout yet */ }
+const now = () => Math.floor(Date.now() / 1000);
+const newSession = () => {
+    const issued = lastIssued = Math.max(Date.now(), sessionEpoch + 1), expiry = now() + SESSION_SECONDS;
+    return `${issued}.${expiry}.${signSession(issued, expiry)}`;
+};
+function endAllSessions() {
+    sessionEpoch = Math.max(Date.now(), lastIssued);
+    try { writeFileSync(EPOCH_FILE, String(sessionEpoch)); } catch (e) { console.error('session-epoch not saved:', e.message); }
+}
+const cookieValue = (req, name) => {
+    for (const part of (req.get('cookie') || '').split(';')) {
+        const i = part.indexOf('=');
+        if (i > 0 && part.slice(0, i).trim() === name) return part.slice(i + 1).trim();
+    }
+    return '';
+};
+function hasSession(req) {
+    const [issued, expiry, mac] = cookieValue(req, SESSION_COOKIE).split('.');
+    return !!mac && /^\d+$/.test(issued) && /^\d+$/.test(expiry) && Number(issued) > sessionEpoch && Number(expiry) > now()
+        && sameSecret(mac, signSession(issued, expiry));
+}
+const sessionCookie = (value, seconds) =>
+    `${SESSION_COOKIE}=${value}; Path=/; Max-Age=${seconds}; HttpOnly; SameSite=Lax${SECURE_COOKIE ? '; Secure' : ''}`;
+
 function isAdminRequest(req) {
+    if (hasSession(req)) return true;
     const [scheme, value] = (req.get('authorization') || '').split(' ');
     if (!value) return false;
     if (/^bearer$/i.test(scheme)) return sameSecret(value, ADMIN_PASSWORD);
@@ -59,8 +114,8 @@ function isAdminRequest(req) {
     return i > 0 && sameSecret(pair.slice(0, i), ADMIN_USER) & sameSecret(pair.slice(i + 1), ADMIN_PASSWORD);
 }
 
-// The browser sends cached Basic credentials with requests that other sites start,
-// so a write that comes from another site is refused (CSRF).
+// The browser sends cached Basic credentials with requests that other sites start (the Lax session cookie only
+// with their top-level page loads), so a write that comes from another site is refused (CSRF).
 function fromOtherSite(req) {
     const site = req.get('sec-fetch-site');
     if (site && site !== 'same-origin' && site !== 'none') return true;
@@ -72,40 +127,113 @@ function fromOtherSite(req) {
 const localPathOr = (value, fallback) =>
     (typeof value === 'string' && /^\/(?![/\\])/.test(value) && !/[\x00-\x20\x7f]/.test(value) ? value : fallback);
 
+// The login page: a plain form in English or Dutch (from the browser's languages); `failed`: wrong user or password,
+// `wait`: minutes left after too many wrong tries
+const LOGIN_TEXT = {
+    en: { title: 'Log in', user: 'User name', password: 'Password', submit: 'Log in', failed: 'The user name or password is not right.',
+        wait: (m) => `Too many wrong tries. Try again in ${m} minute${m === 1 ? '' : 's'}.`, out: 'You are logged out.' },
+    nl: { title: 'Inloggen', user: 'Gebruikersnaam', password: 'Wachtwoord', submit: 'Inloggen', failed: 'De gebruikersnaam of het wachtwoord klopt niet.',
+        wait: (m) => `Te vaak een verkeerd wachtwoord. Probeer het over ${m} minuut${m === 1 ? '' : 'en'} opnieuw.`, out: 'Je bent uitgelogd.' },
+};
+const htmlText = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+function loginPage(req, { next = '/', message = '', user = '' } = {}) {
+    const lang = req.acceptsLanguages('en', 'nl') === 'nl' ? 'nl' : 'en', t = LOGIN_TEXT[lang];
+    const note = typeof message === 'function' ? message(t) : message ? t[message] : '';
+    return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${t.title}</title><style>
+:root { color-scheme: light dark; --bg: #f6f6f7; --card: #fff; --ink: #222; --muted: #666; --line: #d8d8dc; --accent: #2b2b30; --bad: #b3261e; }
+@media (prefers-color-scheme: dark) { :root { --bg: #161618; --card: #222226; --ink: #eee; --muted: #aaa; --line: #3a3a40; --accent: #eee; --bad: #ff8a80; } }
+body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, sans-serif; }
+form { width: min(360px, calc(100vw - 32px)); padding: 28px; background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-sizing: border-box; }
+h1 { margin: 0 0 18px; font-size: 22px; font-weight: 600; }
+label { display: block; margin: 0 0 14px; font-size: 14px; color: var(--muted); }
+input { display: block; width: 100%; box-sizing: border-box; margin-top: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: transparent; color: var(--ink); font: inherit; }
+input:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button { width: 100%; margin-top: 6px; padding: 10px; border: 0; border-radius: 9px; background: var(--accent); color: var(--bg); font: inherit; font-weight: 600; cursor: pointer; }
+.note { margin: -6px 0 16px; font-size: 14px; color: var(--bad); }
+.note.out { color: var(--muted); }
+</style></head><body>
+<form method="post" action="/login">
+<h1>${t.title}</h1>
+${note ? `<p class="note${message === 'out' ? ' out' : ''}" role="alert">${htmlText(note)}</p>` : ''}
+<input type="hidden" name="next" value="${htmlText(next)}">
+<label>${t.user}<input name="user" autocomplete="username" required value="${htmlText(user)}"${user ? '' : ' autofocus'}></label>
+<label>${t.password}<input name="password" type="password" autocomplete="current-password" required${user ? ' autofocus' : ''}></label>
+<button type="submit">${t.submit}</button>
+</form></body></html>`;
+}
+
 if (PROTECTED) {
     const CHALLENGE = 'Basic realm="H5P admin", charset="UTF-8"';
+    // Wrong logins per address (login form, Basic and Bearer alike): after LOGIN_TRIES within LOGIN_WINDOW, the
+    // address waits until the window ends, whatever it sends
+    const LOGIN_TRIES = 5, LOGIN_WINDOW = 15 * 60 * 1000, failures = new Map();
+    const waitMinutes = (ip) => {
+        const f = failures.get(ip);
+        if (!f || Date.now() - f.since > LOGIN_WINDOW) { failures.delete(ip); return 0; }
+        return f.count >= LOGIN_TRIES ? Math.ceil((f.since + LOGIN_WINDOW - Date.now()) / 60000) : 0;
+    };
+    const failed = (ip) => {
+        const f = failures.get(ip) || { count: 0, since: Date.now() };
+        f.count++; failures.set(ip, f);
+        if (failures.size > 10000) failures.delete(failures.keys().next().value);
+    };
+    const noStore = (res) => res.set({ 'Cache-Control': 'no-store', 'Content-Security-Policy': "frame-ancestors 'none'" });
+
+    app.get('/login', (req, res) => {
+        const next = localPathOr(req.query.next, '/');
+        if (isAdminRequest(req)) return res.redirect(303, next);
+        noStore(res).type('html').send(loginPage(req, { next, message: req.query.out !== undefined ? 'out' : '' }));
+    });
+    app.post('/login', bodyParser.urlencoded({ extended: false, limit: '4kb' }), (req, res) => {
+        const next = localPathOr(req.body?.next, '/'), user = String(req.body?.user || ''), password = String(req.body?.password || '');
+        noStore(res);
+        if (fromOtherSite(req)) return res.status(403).type('text/plain').send('Cross-site request refused');
+        const ip = req.ip, wait = waitMinutes(ip);
+        if (wait) return res.status(429).type('html').send(loginPage(req, { next, user, message: (t) => t.wait(wait) }));
+        if (sameSecret(user, ADMIN_USER) & sameSecret(password, ADMIN_PASSWORD)) {
+            failures.delete(ip);
+            return res.set('Set-Cookie', sessionCookie(newSession(), SESSION_SECONDS)).redirect(303, next);
+        }
+        failed(ip);
+        res.status(401).type('html').send(loginPage(req, { next, user, message: 'failed' }));
+    });
+    app.post('/logout', (req, res) => {
+        if (fromOtherSite(req)) return res.status(403).type('text/plain').send('Cross-site request refused');
+        if (isAdminRequest(req)) endAllSessions();
+        noStore(res).set('Set-Cookie', sessionCookie('', 0)).redirect(303, '/login?out');
+    });
+
     app.use((req, res, next) => {
         const isRead = req.method === 'GET' || req.method === 'HEAD';
         if (isRead && PUBLIC_PATHS.test(req.path)) {
             req.isAdmin = false;
             return next();
         }
+        const sentCredentials = !!req.get('authorization');
+        if (sentCredentials && waitMinutes(req.ip)) {
+            return res.status(429).set('Retry-After', String(waitMinutes(req.ip) * 60)).type('text/plain').send('Too many wrong logins; try again later');
+        }
         if (!isAdminRequest(req)) {
+            if (sentCredentials) failed(req.ip);
             const mode = req.get('sec-fetch-mode');
-            if (isRead && req.path === '/login') {
-                return res.status(401).set('WWW-Authenticate', CHALLENGE).type('text/html')
-                    .send('<!doctype html><title>Login required</title><p>Login required. Reload this page to log in.</p>');
-            }
-            // A browser reuses Basic credentials only below the folder of the URL that asked for them
-            // (/edit/ for /edit/x), so the editor's own requests under /h5p/ would go without them.
-            // Page loads therefore log in at /login: at the root, the login covers the whole server.
+            // A browser page load goes to the login page, and comes back here after it
             if (isRead && mode === 'navigate') {
                 return res.redirect(303, '/login?next=' + encodeURIComponent(req.originalUrl));
             }
-            // Ask for the login only from non-browser clients (and other page loads). On a background
-            // request a challenge would pop up a login dialog in a public player and block the page.
-            if (!mode || mode === 'navigate') res.set('WWW-Authenticate', CHALLENGE);
+            // Only clients that are not browsers (no Sec-Fetch-Mode) get a Basic challenge: in a browser it would pop
+            // up a login dialog (in a public player, on a background request, it would block the page).
+            if (!mode) res.set('WWW-Authenticate', CHALLENGE);
             return res.status(401).type('text/plain').send('Login required');
         }
-        if (!isRead && /^basic/i.test(req.get('authorization')) && fromOtherSite(req)) {
+        if (sentCredentials) failures.delete(req.ip);   // a right login clears the address's wrong ones, as on the form
+        if (!isRead && !/^bearer/i.test(req.get('authorization') || '') && fromOtherSite(req)) {
             return res.status(403).type('text/plain').send('Cross-site request refused');
         }
         req.isAdmin = true;
         res.set('Content-Security-Policy', "frame-ancestors 'self'");
         next();
     });
-    // Logged in (the middleware above asks for the login): back to the page that was asked for
-    app.get('/login', (req, res) => res.redirect(303, localPathOr(req.query.next, '/')));
 }
 
 // Values written into inline <script> blocks: a JS literal that cannot close the script

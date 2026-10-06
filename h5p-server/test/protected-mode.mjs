@@ -1,5 +1,6 @@
 // Checks protected mode (H5P_ADMIN_PASSWORD set) over HTTP: only playing is public, every
-// other route needs the admin login, cross-site writes are refused, and request values
+// other route needs the admin login (login page + session cookie, or Basic/Bearer for scripts),
+// wrong logins are slowed down per address, cross-site writes are refused, and request values
 // cannot break out of the player's inline script.
 // Usage: node test/protected-mode.mjs <baseUrl> <adminPassword> <package.h5p>
 //   (server started with H5P_ADMIN_PASSWORD=<adminPassword>, H5P_BASE_URL=<baseUrl>)
@@ -45,7 +46,48 @@ const isRedirect = (r, location) => [302, 303].includes(r.status) && r.location 
 const nav = await get('/edit/x?a=1', 'navigate');
 check('anonymous page load -> redirect to /login?next=', isRedirect(nav, '/login?next=' + encodeURIComponent('/edit/x?a=1')), `${nav.status} ${nav.location}`);
 const login = await get('/login?next=%2Fedit%2Fx', 'navigate');
-check('anonymous /login -> 401 asking for Basic login', login.status === 401 && /^Basic /.test(login.challenge), `${login.status} ${login.challenge}`);
+check('anonymous /login -> 200 login page, no Basic challenge', login.status === 200 && !login.challenge, `${login.status} ${login.challenge}`);
+const loginHtml = await (await fetch(BASE + '/login?next=' + encodeURIComponent('/edit/x"><script>'))).text();
+check('login page escapes next', loginHtml.includes('value="/edit/x&quot;&gt;&lt;script&gt;"') && !loginHtml.includes('"><script>'));
+// the login form: each test address its own (X-Forwarded-For is trusted from loopback), so the slow-down cannot lock out the rest
+const postLogin = (fields, headers = {}) => fetch(BASE + '/login', { method: 'POST', redirect: 'manual',
+  headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': '203.0.113.1', ...headers }, body: new URLSearchParams(fields) });
+const bad = await postLogin({ user: 'admin', password: PASSWORD + 'x', next: '/edit/x' });
+check('form login with a wrong password -> 401, no cookie', bad.status === 401 && !bad.headers.get('set-cookie'), String(bad.status));
+const good = await postLogin({ user: 'admin', password: PASSWORD, next: '/edit/x?a=1' });
+const cookie = (good.headers.get('set-cookie') || '').split(';')[0];
+check('form login -> 303 to next with a session cookie', good.status === 303 && good.headers.get('location') === '/edit/x?a=1' && /^h5p_admin=\d+\.\d+\.[\w-]+$/.test(cookie), `${good.status} ${good.headers.get('location')}`);
+check('session cookie is HttpOnly and SameSite=Lax', /HttpOnly/.test(good.headers.get('set-cookie')) && /SameSite=Lax/.test(good.headers.get('set-cookie')));
+check('session cookie opens admin routes', (await status('/api/content', { headers: { cookie } })) === 200);
+check('a forged session cookie -> 401', (await status('/api/content', { headers: { cookie: 'h5p_admin=9999999999.forged' } })) === 401);
+check('an expired session cookie -> 401', (await status('/api/content', { headers: { cookie: cookie.replace(/=\d+/, '=1') } })) === 401);
+check('cross-site write with the session cookie -> 403', (await status('/api/save', { method: 'POST', headers: { cookie, 'sec-fetch-site': 'cross-site' } })) === 403);
+check('cross-site login post -> 403', (await postLogin({ user: 'admin', password: PASSWORD }, { 'sec-fetch-site': 'cross-site', 'x-forwarded-for': '203.0.113.2' })).status === 403);
+const unsafe = await postLogin({ user: 'admin', password: PASSWORD, next: '//evil.example' }, { 'x-forwarded-for': '203.0.113.3' });
+check('form login with unsafe next -> redirect to /', unsafe.headers.get('location') === '/', unsafe.headers.get('location'));
+const out = await fetch(BASE + '/logout', { method: 'POST', redirect: 'manual', headers: { cookie } });
+check('logout clears the cookie and goes to the login page', out.status === 303 && /h5p_admin=;.*Max-Age=0/.test(out.headers.get('set-cookie') || '') && out.headers.get('location') === '/login?out');
+check('after logout a copy of the old cookie no longer works', (await status('/api/content', { headers: { cookie } })) === 401);
+const relogin = (await postLogin({ user: 'admin', password: PASSWORD }, { 'x-forwarded-for': '203.0.113.6' })).headers.get('set-cookie')?.split(';')[0];
+check('logging in again after logout works', (await status('/api/content', { headers: { cookie: relogin } })) === 200);
+// a fresh address per run, so a second run against the same server does not start out waiting
+const rnd = () => Math.floor(Math.random() * 0xffff).toString(16);
+const slow = `2001:db8::${rnd()}:${rnd()}`;
+let tries = [];
+for (let i = 0; i < 6; i++) tries.push((await postLogin({ user: 'admin', password: 'nope' }, { 'x-forwarded-for': slow })).status);
+const after = (await postLogin({ user: 'admin', password: PASSWORD }, { 'x-forwarded-for': slow })).status;
+check('after 5 wrong logins an address waits (429), even with the right password', tries.join() === '401,401,401,401,401,429' && after === 429, `${tries} then ${after}`);
+const scripted = `2001:db8::${rnd()}:${rnd()}`, viaHeader = [];
+for (const auth of [basic('admin', 'x1'), basic('admin', 'x2'), 'Bearer x3', 'Bearer x4', basic('admin', 'x5'), basic('admin', PASSWORD)]) {
+  viaHeader.push(await status('/api/content', { headers: { authorization: auth, 'x-forwarded-for': scripted } }));
+}
+check('wrong Basic/Bearer logins count too: the 6th try waits (429)', viaHeader.join() === '401,401,401,401,401,429', viaHeader.join());
+check('a client-written X-Forwarded-For entry before a private hop is not trusted', await (async () => {
+  const spoof = `2001:db8::${rnd()}:${rnd()}`;
+  for (let i = 0; i < 6; i++) await postLogin({ user: 'admin', password: 'nope' }, { 'x-forwarded-for': `${spoof}, 172.17.0.1` });
+  return (await postLogin({ user: 'admin', password: PASSWORD }, { 'x-forwarded-for': spoof })).status === 303;
+})());
+check('another address can still log in', (await postLogin({ user: 'admin', password: PASSWORD }, { 'x-forwarded-for': '203.0.113.5' })).status === 303);
 const back = await get('/login?next=' + encodeURIComponent('/edit/x?a=1'), 'navigate', ADMIN);
 check('admin /login -> redirect to next', isRedirect(back, '/edit/x?a=1'), `${back.status} ${back.location}`);
 for (const next of ['//evil.example', 'https://evil.example', '/\\evil', '/\t/evil.example', 'evil']) {
