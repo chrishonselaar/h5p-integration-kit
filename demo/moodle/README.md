@@ -58,9 +58,11 @@ in activity chooser" so teachers see it when they add an activity.
 
 ## Known quirks
 
-- The `bitnamilegacy/*` images no longer get updates. They are fine for a local demo. For the
-  "upgrade Moodle" part of the demo, `MOODLE_TAG=5.0 docker compose up -d` should upgrade the
-  existing site. That hasn't been tried yet.
+- The `bitnamilegacy/*` images no longer get updates. They are fine for a local demo.
+- **Upgrading Moodle** for the demo: `demo/moodle/upgrade-moodle.sh 5.0` swaps in the 5.0 code and
+  runs Moodle's upgrade. A new image tag alone does not upgrade, because the image keeps the code
+  in its volume. Tested 2026-10-07: 4.5.4 → 5.0.1. Afterwards an activity made on 4.5 still
+  launched and sent its grade, and `e2e.mjs` passed on 5.0, with no change to the tool.
 - On this image, the first login in a new browser session fails with "Invalid login". The
   second try works.
 - Reset everything: `docker compose down -v`, and delete `examples/lti-provider/lti_data.db`.
