@@ -62,3 +62,6 @@ examples/lti-provider/tool_config.json
 
 # Plan files
 .claude/plans/
+
+# Business documents (pitches, plans, personal notes): never in this public repo
+private/
