@@ -30,9 +30,14 @@ demo/moodle/setup.sh
 | Teacher | teacher | Demo123! |
 | Student | student | Demo123! |
 
-Automated run of steps 2 and 3, with Playwright: `node demo/moodle/e2e.mjs` (the student picks
-the right answer) or `node demo/moodle/e2e.mjs wrong`. It exits non-zero if the
-grade does not reach Moodle.
+Automated run of steps 2 and 3, with Playwright (`npm install` in `demo/moodle` once):
+`node demo/moodle/e2e.mjs` (the student picks the right answer) or `node demo/moodle/e2e.mjs wrong`.
+It exits non-zero if the grade does not reach Moodle.
+
+`demo/moodle/ci.sh [4.5|5.0]` does everything from nothing: a fresh Moodle, empty H5P and tool
+data, registration, and both e2e runs. Then it removes it all. GitHub Actions runs it for Moodle
+4.5 and 5.0 on every push and every Monday (`.github/workflows/tests.yml`). It needs ports 8080,
+3000 and 5001 free, so stop the demo first.
 
 ## Registering by hand instead of `setup.sh`
 

@@ -1,0 +1,9 @@
+{
+  "name": "h5p-kit-moodle-demo",
+  "private": true,
+  "description": "Browser test for the Moodle demo (e2e.mjs)",
+  "type": "module",
+  "devDependencies": {
+    "playwright": "^1.58.0"
+  }
+}

@@ -1,0 +1,76 @@
+# Tests on every push and weekly, so a new Moodle or H5P release that breaks something shows up
+# before customers notice it.
+name: tests
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 5 * * 1'    # Mondays 05:00 UTC
+  workflow_dispatch:
+
+jobs:
+  lti-tool:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env: { POSTGRES_USER: lti, POSTGRES_PASSWORD: pw, POSTGRES_DB: lti }
+        ports: ['5432:5432']
+        options: --health-cmd "pg_isready -U lti" --health-interval 5s --health-retries 10
+    defaults: { run: { working-directory: examples/lti-provider } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -r requirements.txt pytest
+      - name: pytest (SQLite)
+        run: pytest -q tests
+      - name: pytest (PostgreSQL)
+        run: pytest -q tests
+        env: { DATABASE_URL: 'postgresql+psycopg://lti:pw@localhost:5432/lti' }
+
+  h5p-server:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: h5p-server } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - run: npm ci
+      - name: Protected mode and editor tickets
+        run: |
+          mkdir -p "$RUNNER_TEMP/h5p" && cp -r h5p/core h5p/editor "$RUNNER_TEMP/h5p/"
+          PORT=3300 H5P_BASE_URL=http://localhost:3300 H5P_DATA_PATH="$RUNNER_TEMP/h5p" \
+            H5P_ADMIN_PASSWORD=ci-admin H5P_TOOL_SECRET=ci-tool node src/index.js > "$RUNNER_TEMP/server.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf localhost:3300/health && break; sleep 1; done
+          PACKAGE=../demo/moodle/fixtures/multiple-choice.h5p
+          node test/editor-tickets.mjs http://localhost:3300 ci-admin ci-tool $PACKAGE
+          node test/protected-mode.mjs http://localhost:3300 ci-admin $PACKAGE
+      - name: Escaping (open server)
+        run: |
+          mkdir -p "$RUNNER_TEMP/open" && cp -r h5p/core h5p/editor "$RUNNER_TEMP/open/"
+          PORT=3400 H5P_BASE_URL=http://localhost:3400 H5P_DATA_PATH="$RUNNER_TEMP/open" node src/index.js > "$RUNNER_TEMP/open.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf localhost:3400/health && break; sleep 1; done
+          id=$(curl -sf -F file=@../demo/moodle/fixtures/multiple-choice.h5p localhost:3400/api/import | python3 -c 'import json,sys; print(json.load(sys.stdin)["contentId"])')
+          node test/escaping.mjs http://localhost:3400 "$id"
+
+  moodle:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        moodle: ['4.5', '5.0']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22' }
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: npm ci
+        working-directory: h5p-server
+      - run: pip install -r examples/lti-provider/requirements.txt
+      - run: npm install && npx playwright install --with-deps chromium
+        working-directory: demo/moodle
+      - name: Moodle ${{ matrix.moodle }}, Dynamic Registration, Deep Linking, grade
+        run: demo/moodle/ci.sh ${{ matrix.moodle }}
