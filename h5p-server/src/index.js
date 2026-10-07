@@ -595,6 +595,10 @@ async function initH5P() {
     config.ajaxUrl = '/h5p/ajax';
     config.librariesUrl = '/h5p/libraries';
     config.contentUrl = '/h5p/content';
+    // Where players fetch a content's own files (H5P.getPath): the public static /h5p/content route above. Without this
+    // override h5p-server leaves it to H5P core, which asks <baseUrl>/content/<id>/…, an admin-only route here, so an
+    // image inside a content (an uploaded Image, an imported item's pictures) did not show to anyone else.
+    config.contentFilesUrlPlayerOverride = `${H5P_BASE_URL}/h5p/content/{{contentId}}`;
     config.playUrl = '/h5p/play';
     config.downloadUrl = '/h5p/download';
     config.temporaryFilesUrl = '/temp-files';
