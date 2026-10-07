@@ -80,6 +80,12 @@ const edited = await req(`/edit/${A}`, e.cookie, { method: 'POST', headers: { 'c
 check('edit: save -> 200', edited.status === 200, String(edited.status));
 
 // 4. Forged cookie, and admin logout ends editor sessions
+// a ticket with an organisation: its session may use plugin APIs under /library/api/ (no plugin here: 404, not 401)
+const withOrg = await start(ticket({ scope: 'new', org: 'team-a' }));
+check('ticket with org -> 303', withOrg.status === 303, String(withOrg.status));
+check('session with org reaches /library/api/ (404 without a plugin, not 401)', (await req('/library/api/config', withOrg.cookie)).status === 404);
+check('session without org may not use /library/api/ -> 401', (await req('/library/api/config', n.cookie)).status === 401);
+check('ticket with a malformed org -> 403', (await start(ticket({ scope: 'new', org: '../x' }))).status === 403);
 check('forged cookie -> 401', (await req('/new', n.cookie.replace(/.$/, (c) => (c === 'A' ? 'B' : 'A')))).status === 401);
 const login = await fetch(`${BASE}/login`, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/x-www-form-urlencoded', origin: BASE },
   body: `user=admin&password=${encodeURIComponent(PASSWORD)}` });

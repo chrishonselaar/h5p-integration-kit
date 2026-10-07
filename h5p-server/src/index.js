@@ -160,6 +160,8 @@ function readTicket(ticket) {
     const t = signedJson(ticket, (p) => toolMac('h5p-editor-ticket.' + p));
     if (!t || typeof t.jti !== 'string' || !Number.isInteger(t.exp) || t.exp <= now() || t.exp > now() + 600) return null;
     if (!['new', 'edit'].includes(t.scope) || (t.scope === 'edit' && !/^[A-Za-z0-9_-]{1,64}$/.test(String(t.contentId)))) return null;
+    // optional: the organisation the tool's LMS belongs to (same form as an account's org), for plugins
+    if (t.org !== undefined && t.org !== null && !(typeof t.org === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(t.org))) return null;
     if (!httpUrlOrNull(t.returnUrl) || usedTickets.has(t.jti)) return null;
     for (const [jti, exp] of usedTickets) if (exp <= now()) usedTickets.delete(jti);
     usedTickets.set(t.jti, t.exp);
@@ -167,7 +169,7 @@ function readTicket(ticket) {
 }
 const editorMac = (payload) => createHmac('sha256', editorKey).update(payload).digest('base64url');
 function newEditorSession(t) {
-    const payload = Buffer.from(JSON.stringify({ scope: t.scope, contentId: t.scope === 'edit' ? String(t.contentId) : null, sub: String(t.sub || 'teacher'),
+    const payload = Buffer.from(JSON.stringify({ scope: t.scope, contentId: t.scope === 'edit' ? String(t.contentId) : null, sub: String(t.sub || 'teacher'), org: t.org || null,
         jti: t.jti, returnUrl: t.returnUrl, exp: now() + EDITOR_SECONDS, epoch: sessionEpoch })).toString('base64url');
     return `${payload}.${editorMac(payload)}`;
 }
@@ -185,6 +187,8 @@ function editorMayUse(e, req) {
     if (p === '/new') return e.scope === 'new';
     if (p.startsWith('/edit/') || p.startsWith('/params/')) return e.scope === 'edit' && p.split('/')[2] === e.contentId && p.split('/').length === 3;
     if (p === '/h5p/ajax') return EDITOR_AJAX.has(req.query.action);
+    // a session for an organisation (ticket "org") may use plugin APIs under /library/api/, which keep organisations apart
+    if (e.org && p.startsWith('/library/api/') && !p.split('/').some((x) => x === '..' || x === '.')) return true;
     return req.method === 'GET' && /^\/(h5p\/editor|temp-files|editor-assets)\//.test(p);
 }
 // The return URL after a save: an editor session goes back to its tool, with the save signed
@@ -323,6 +327,8 @@ if (PROTECTED) {
         if (!isAdminRequest(req) && req.editor && editorMayUse(req.editor, req)) {
             if (!isRead && fromOtherSite(req)) return res.status(403).type('text/plain').send('Cross-site request refused');
             req.isAdmin = false;
+            // with an organisation, plugins see it like an account (one author per LMS user, no uploads)
+            if (req.editor.org) req.account = { user: 'lti-' + createHash('sha256').update(req.editor.sub).digest('hex').slice(0, 16), org: req.editor.org, uploads: false };
             res.set('Content-Security-Policy', "frame-ancestors 'self'");
             return next();
         }
@@ -986,7 +992,7 @@ app.post('/new', fileUpload({ useTempFiles: true, tempFileDir: uploadTmpPath }),
         );
 
         // Content an account makes belongs to its organisation (so the account may edit it again)
-        if (req.account) accounts.setOrg(String(savedId.id), req.account.org);
+        if (req.account && accounts) accounts.setOrg(String(savedId.id), req.account.org);
         const redirectUrl = savedReturnUrl(req, returnUrl, savedId.id, metadata.title) || `/edit/${savedId.id}`;
 
         // Always return JSON for the client-side interception to catch

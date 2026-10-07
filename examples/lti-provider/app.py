@@ -15,7 +15,7 @@ Run:
     python app.py
 
 Settings (environment variables, see README.md): APP_URL, H5P_SERVER, H5P_TOOL_SECRET,
-H5P_API_TOKEN, DATABASE_URL, SECRET_KEY, LTI_REGISTRATION_KEY, LTI_TOOL_NAME, LTI_KEY_DIR, HOST, PORT.
+H5P_API_TOKEN, H5P_ORG, DATABASE_URL, SECRET_KEY, LTI_REGISTRATION_KEY, LTI_TOOL_NAME, LTI_KEY_DIR, HOST, PORT.
 """
 
 import base64
@@ -51,6 +51,8 @@ H5P_SERVER = os.environ.get('H5P_SERVER', 'http://localhost:3000').rstrip('/')
 # Shared with the H5P server (its H5P_TOOL_SECRET). Without it the editor links are unsigned,
 # which only works with an H5P server that is not in protected mode (development).
 H5P_TOOL_SECRET = os.environ.get('H5P_TOOL_SECRET', '')
+# The organisation this tool's LMSes belong to on the H5P server (e.g. its slide library); sent in editor tickets
+H5P_ORG = os.environ.get('H5P_ORG', '')
 # The H5P server's admin password, for server-to-server calls (assign-content command)
 H5P_API_TOKEN = os.environ.get('H5P_API_TOKEN', '')
 # When set, Dynamic Registration needs ?key=<this> in the registration URL
@@ -346,7 +348,7 @@ def open_editor():
 
     payload = b64url(json.dumps({
         'scope': 'edit' if content_id else 'new', 'contentId': content_id, 'sub': launch['user_id'],
-        'returnUrl': return_url, 'jti': jti, 'exp': int(time.time()) + 300,
+        'returnUrl': return_url, 'jti': jti, 'exp': int(time.time()) + 300, **({'org': H5P_ORG} if H5P_ORG else {}),
     }, separators=(',', ':')).encode())
     ticket = f'{payload}.{tool_signature("h5p-editor-ticket." + payload)}'
     return redirect(f'{H5P_SERVER}/editor/start?' + urlencode({'ticket': ticket}))

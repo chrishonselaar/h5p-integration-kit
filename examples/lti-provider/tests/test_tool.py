@@ -117,6 +117,14 @@ def test_editor_ticket_is_signed_and_scoped(world):
     assert valid and edit['scope'] == 'edit' and edit['contentId'] == 'c-a'
 
 
+def test_editor_ticket_carries_the_organisation_when_set(world, monkeypatch):
+    _, plain, _ = editor_ticket(world)
+    assert 'org' not in plain
+    monkeypatch.setattr(tool, 'H5P_ORG', 'team-a')
+    _, with_org, valid = editor_ticket(world)
+    assert valid and with_org['org'] == 'team-a'
+
+
 def test_editor_done_needs_h5p_server_signature(world):
     c, ticket, _ = editor_ticket(world)
     done = f"/lti/editor/done?launch={world['teacher_a']}&ticket={ticket['jti']}&contentId=c-new&title=New"

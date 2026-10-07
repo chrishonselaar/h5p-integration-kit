@@ -39,6 +39,7 @@ gunicorn --preload -w 4 -b 0.0.0.0:5001 app:app
 | `H5P_SERVER` | `http://localhost:3000` | The H5P server as the browser sees it (player and editor) |
 | `H5P_TOOL_SECRET` | *(unset)* | The same secret as the H5P server's `H5P_TOOL_SECRET`. The tool signs editor tickets with it, so teachers can create and edit content on a protected H5P server. Unset only works with an open (development) H5P server |
 | `H5P_API_TOKEN` | *(unset)* | The H5P server's admin password, for the `assign-content` command |
+| `H5P_ORG` | *(unset)* | The organisation these LMSes belong to on the H5P server (the H5P server's `H5P_ACCOUNTS` organisations). Sent in editor tickets, so plugins such as a slide library show that organisation's files in the editor |
 | `DATABASE_URL` | `sqlite:///lti_data.db` | `postgresql+psycopg://user:password@host/db` for PostgreSQL. Tables are created on start |
 | `SECRET_KEY` | *(a fixed development value)* | Signs the session cookie and form tokens. **Set a long random value in production** |
 | `LTI_REGISTRATION_KEY` | *(unset)* | When set, the registration URL only works with `?key=<value>`, so only LMSes you gave the key to can connect |
