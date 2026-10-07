@@ -3,7 +3,7 @@
 //   php moodle-setup.php site              allow the tool on localhost; course, teacher, student
 //   php moodle-setup.php registration-url  URL that starts LTI Dynamic Registration (what Moodle's
 //                                          "Add LTI Advantage" button does), for the tool URL in $argv[2]
-//   php moodle-setup.php activate          activate the registered tool, show it in the activity chooser
+//   php moodle-setup.php activate <url>    activate the tool registered from <url>, show it in the activity chooser
 define('CLI_SCRIPT', true);
 require('/opt/bitnami/moodle/config.php');
 require_once($CFG->dirroot . '/mod/lti/locallib.php');
@@ -55,9 +55,11 @@ if ($command === 'site') {
 
 } else if ($command === 'activate') {
     // What the admin does on Manage tools: activate the pending tool; also offer it in the activity chooser
-    $type = $DB->get_record_sql("SELECT * FROM {lti_types} WHERE name = ? ORDER BY id DESC", ['H5P'], IGNORE_MULTIPLE);
+    // The tool registered from the URL in $argv[2] (e.g. http://localhost:5001)
+    $type = $DB->get_record_sql("SELECT * FROM {lti_types} WHERE baseurl LIKE ? ORDER BY id DESC",
+        [$DB->sql_like_escape($argv[2]) . '%'], IGNORE_MULTIPLE);
     if (!$type) {
-        fwrite(STDERR, "No registered tool named H5P\n");
+        fwrite(STDERR, "No tool registered from $argv[2]\n");
         exit(1);
     }
     $DB->set_field('lti_types', 'state', LTI_TOOL_STATE_CONFIGURED, ['id' => $type->id]);
@@ -68,6 +70,6 @@ if ($command === 'site') {
     \cache_helper::purge_all();
     echo "Activated tool $type->id (client id $type->clientid)\n";
 } else {
-    fwrite(STDERR, "usage: php moodle-setup.php site | registration-url <tool url> | activate\n");
+    fwrite(STDERR, "usage: php moodle-setup.php site | registration-url <tool url> | activate <tool url>\n");
     exit(2);
 }

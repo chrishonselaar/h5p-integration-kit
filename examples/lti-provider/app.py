@@ -15,7 +15,7 @@ Run:
     python app.py
 
 Settings (environment variables, see README.md): APP_URL, H5P_SERVER, H5P_TOOL_SECRET,
-H5P_API_TOKEN, DATABASE_URL, SECRET_KEY, LTI_REGISTRATION_KEY, LTI_KEY_DIR, HOST, PORT.
+H5P_API_TOKEN, DATABASE_URL, SECRET_KEY, LTI_REGISTRATION_KEY, LTI_TOOL_NAME, LTI_KEY_DIR, HOST, PORT.
 """
 
 import base64
@@ -55,6 +55,9 @@ H5P_TOOL_SECRET = os.environ.get('H5P_TOOL_SECRET', '')
 H5P_API_TOKEN = os.environ.get('H5P_API_TOKEN', '')
 # When set, Dynamic Registration needs ?key=<this> in the registration URL
 LTI_REGISTRATION_KEY = os.environ.get('LTI_REGISTRATION_KEY', '')
+# The name teachers see in the LMS's activity chooser. Not plain "H5P": Moodle has a core activity
+# with that name.
+LTI_TOOL_NAME = os.environ.get('LTI_TOOL_NAME', 'H5P (hosted)')
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY') or 'change-this-in-production-use-random-key'
@@ -470,7 +473,7 @@ def lti_register():
         'grant_types': ['implicit', 'client_credentials'],
         'initiate_login_uri': f'{APP_URL}/lti/login',
         'redirect_uris': [f'{APP_URL}/lti/launch'],
-        'client_name': 'H5P',
+        'client_name': LTI_TOOL_NAME,
         'jwks_uri': f'{APP_URL}/.well-known/jwks.json',
         'token_endpoint_auth_method': 'private_key_jwt',
         'scope': ' '.join([AGS_SCORE, AGS_LINEITEM, AGS_RESULT]),
@@ -483,7 +486,7 @@ def lti_register():
             'messages': [
                 {'type': 'LtiResourceLinkRequest', 'target_link_uri': f'{APP_URL}/lti/launch'},
                 {'type': 'LtiDeepLinkingRequest', 'target_link_uri': f'{APP_URL}/lti/launch',
-                 'label': 'H5P', 'placements': ['ContentArea']},
+                 'label': LTI_TOOL_NAME, 'placements': ['ContentArea']},
             ],
         },
     }
@@ -524,7 +527,7 @@ def home():
 def lti_config():
     """Values for registering the tool by hand (when the LMS has no Dynamic Registration)."""
     return jsonify({
-        'tool_name': 'H5P',
+        'tool_name': LTI_TOOL_NAME,
         'registration_url': f'{APP_URL}/lti/register',
         'oidc_initiation_url': f'{APP_URL}/lti/login',
         'target_link_uri': f'{APP_URL}/lti/launch',

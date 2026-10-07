@@ -50,6 +50,8 @@ curl -sf -o /dev/null -X DELETE -H "Authorization: Bearer $H5P_ADMIN_PASSWORD" "
 echo "== Register the tool in Moodle"
 COMPOSE_PROJECT_NAME=$PROJECT ./setup.sh
 
+# Show the registered tool (name, active, in the activity chooser)
+docker exec "$(docker compose -p $PROJECT ps -q moodle)" /opt/bitnami/php/bin/php -r 'define("CLI_SCRIPT",1); require "/opt/bitnami/moodle/config.php"; foreach ($DB->get_records("lti_types") as $t) echo "Tool in Moodle: $t->name (state $t->state, chooser $t->coursevisible)\n";'
 echo "== Teacher and student, right answer"
 status=0
 node e2e.mjs right || status=1

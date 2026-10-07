@@ -68,6 +68,6 @@ in activity chooser" so teachers see it when they add an activity.
   runs Moodle's upgrade. A new image tag alone does not upgrade, because the image keeps the code
   in its volume. Tested 2026-10-07: 4.5.4 → 5.0.1. Afterwards an activity made on 4.5 still
   launched and sent its grade, and `e2e.mjs` passed on 5.0, with no change to the tool.
-- On this image, the first login in a new browser session fails with "Invalid login". The
-  second try works.
+- On this image, the first login (sometimes the first two) in a new browser session fails with
+  "Invalid login". Trying again works. `e2e.mjs` retries up to four times.
 - Reset everything: `docker compose down -v`, and delete `examples/lti-provider/lti_data.db`.

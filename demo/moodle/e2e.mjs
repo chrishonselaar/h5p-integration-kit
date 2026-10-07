@@ -19,8 +19,8 @@ const browser = await chromium.launch({ executablePath: process.env.CHROME || un
 async function login(username) {
   const context = await browser.newContext({ viewport: { width: 1300, height: 950 } });
   const page = await context.newPage();
-  // Moodle (bitnami image) rejects the first login of a fresh browser session; retry once.
-  for (let i = 0; i < 2 && !page.url().includes('/my/'); i++) {
+  // Moodle (bitnami image) often rejects the first login of a fresh browser session; retry.
+  for (let i = 0; i < 4 && !page.url().includes('/my/'); i++) {
     await page.goto(`${MOODLE}/login/index.php`);
     await page.fill('#username', username);
     await page.fill('#password', 'Demo123!');

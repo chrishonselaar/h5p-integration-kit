@@ -15,7 +15,7 @@ moodle() { docker exec -u daemon "$CONTAINER" /opt/bitnami/php/bin/php /tmp/mood
 docker cp moodle-setup.php "$CONTAINER":/tmp/moodle-setup.php >/dev/null
 COURSE=$(moodle site | tail -1)
 
-if docker exec -u daemon "$CONTAINER" /opt/bitnami/php/bin/php -r 'define("CLI_SCRIPT",1); require "/opt/bitnami/moodle/config.php"; exit($DB->record_exists("lti_types", ["name" => "H5P"]) ? 0 : 1);'; then
+if docker exec -u daemon "$CONTAINER" /opt/bitnami/php/bin/php -r 'define("CLI_SCRIPT",1); require "/opt/bitnami/moodle/config.php"; exit($DB->record_exists_select("lti_types", "baseurl LIKE ?", [$argv[1] . "%"]) ? 0 : 1);' "$TOOL_URL"; then
   echo "Tool already registered."
 else
   # The admin pastes $TOOL_URL/lti/register under Manage tools and clicks "Add LTI Advantage";
@@ -24,7 +24,7 @@ else
   curl -sf -o /dev/null "$REG_URL" || { echo "Registration failed: is the tool running at $TOOL_URL?"; exit 1; }
   echo "Tool registered by Dynamic Registration."
 fi
-moodle activate
+moodle activate "$TOOL_URL"
 
 echo
 echo "Moodle:  http://localhost:8080   (admin / Admin123!, teacher / Demo123!, student / Demo123!)"
