@@ -84,6 +84,8 @@ Environment variables:
 | `H5P_ADMIN_USER` | `admin` | User name for the admin login in protected mode |
 | `H5P_SESSION_HOURS` | `12` | How long a login on the login page lasts (protected mode) |
 | `H5P_TOOL_SECRET` | *(unset)* | Secret shared with an LTI tool (`examples/lti-provider`). Lets the tool open the editor for a teacher with a signed ticket, without the admin login; see *Editor tickets* below. Unset means no tickets |
+| `H5P_ACCOUNTS` | *(unset)* | Path to a JSON file of extra logins, each tied to one organisation (protected mode only); see *Accounts* below. Unset means only the admin login |
+| `H5P_UI_LANGUAGE` | *(unset)* | `en` or `nl`: the language of the login page, the editor (H5P's own editor texts and the content types' language files) and the editor's buttons. Unset means the login page follows the browser and the editor is English |
 | `H5P_TRUST_PROXY` | *(one hop from a loopback/private address)* | Which proxies' `X-Forwarded-For` the server trusts for the client's address (Express `trust proxy` syntax); used to slow down wrong logins per address |
 | `H5P_EXTRA_SUBCONTENT` | *(unset)* | Path to a JSON file that lets containers accept extra content types, e.g. `{"H5P.Column": ["H5P.DeepZoomPage 0.1"], "H5P.QuestionSet": ["H5P.DeepZoomQuestion 0.1"]}`. H5P.Column, H5P.QuestionSet and similar containers only allow the sub-content types listed in their `semantics.json`; the editor removes any other type on save. Unset means stock behaviour |
 | `H5P_EDITOR_ASSETS` | *(unset)* | Path to a folder served at `/editor-assets/`, for files that editor widgets read, e.g. a media catalogue. In protected mode it needs the admin login, like the editor. Unset means no such route |
@@ -125,6 +127,23 @@ Teachers who create content from their LMS don't get the admin password. Instead
 - **The ticket** is `<payload>.<signature>`. The payload is base64url JSON with `scope` (`new`, or `edit` with a `contentId`), `sub`, `returnUrl`, `jti` and `exp`. The signature is HMAC-SHA256 with the secret over `h5p-editor-ticket.<payload>`. A ticket is valid for at most 10 minutes and works once.
 - **It becomes an editor session** (cookie `h5p_editor`, or `__Host-h5p_editor` on https; HttpOnly, SameSite=Lax, 2 hours). The session allows only its scope: the editor page and its saves for new content, or for that one content id, plus the editor's own requests. It does not allow installing or uploading libraries, other content, the content list, deleting or importing. Logging out of the admin account, or a new password, ends editor sessions too.
 - **After a save**, the editor returns to the ticket's `returnUrl` (never one from the query string) with `contentId`, `title` and `sig`, the HMAC of `h5p-editor-saved.<jti>.<contentId>`. That's how the tool knows this server saved that content for that ticket, and records which LMS owns it.
+
+### Accounts (one login per organisation)
+
+When several teams share one server, give each its own login instead of the admin password. `H5P_ACCOUNTS` names a JSON file:
+
+```json
+[{ "user": "team-a", "password": "scrypt:…", "org": "team-a",
+   "home": "/portal/team-a/", "allow": ["/portal/team-a/", "/library/api/"], "uploads": false }]
+```
+
+- **`password`** is a hash. Make one with `node src/accounts.js hash` (type the password, then Enter; it reads stdin).
+- **People log in on the same login page** as the admin. An account gets its own cookie (`h5p_account`, or `__Host-h5p_account` on https) and lands on its `home`.
+- **An account may use** the editor for new content and for content of its own `org`, what the editor loads, and any request under its `allow` prefixes, such as a plugin's pages and API. Nothing else: no content list, no delete, no import, no library installs. Plugins see `req.account = { user, org, uploads }` and keep organisations apart within their own routes.
+- **Which content belongs to which organisation** is kept in `<H5P_DATA_PATH>/content-orgs.json` (`{ "<contentId>": "<org>" }`). Content an account saves is added to it. An admin or an import script writes other entries. Content that is not listed stays admin-only.
+- **Logging out ends only that account's sessions.** A new password for the account ends them too, and so does a new admin password. Admin and accounts don't share a session: logging in as one logs the browser out of the other.
+
+Tests: `node test/accounts.mjs make <file> <accountPassword>` writes two test accounts; then `node test/accounts.mjs <baseUrl> <adminPassword> <accountPassword> <package.h5p>` against a protected server started with `H5P_ACCOUNTS=<file>`.
 
 Tests: `node test/protected-mode.mjs <baseUrl> <password> <package.h5p>` against a protected server, `node test/editor-tickets.mjs <baseUrl> <password> <toolSecret> <package.h5p>` against a protected server with `H5P_TOOL_SECRET`, and `node test/escaping.mjs <baseUrl> <contentId>` against an open one.
 

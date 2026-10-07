@@ -20,6 +20,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { BlockList } from 'net';
 import * as H5P from '@lumieducation/h5p-server';
+import { loadAccounts } from './accounts.js';
 import { createRequire } from 'module';
 
 // Lumi's own editor page template (wrapped below so its inline JSON is escaped)
@@ -51,6 +52,7 @@ const H5P_BASE_URL = process.env.H5P_BASE_URL || `http://localhost:${PORT}`;
 const H5P_DATA_PATH = process.env.H5P_DATA_PATH || path.resolve(__dirname, '../h5p');
 
 // Protected mode (opt-in, for a server on the internet): set H5P_ADMIN_PASSWORD.
+// Accounts (opt-in, H5P_ACCOUNTS): extra logins, each tied to one organisation; see accounts.js.
 // Then only playing is public (GET /play/:id and the static files it loads);
 // everything else (editor, save, delete, import, content list, H5P ajax) needs the
 // admin login. People log in on the /login page (user H5P_ADMIN_USER, default "admin"),
@@ -60,6 +62,11 @@ const H5P_DATA_PATH = process.env.H5P_DATA_PATH || path.resolve(__dirname, '../h
 // anonymous and keep no user state. Without the variable the server behaves as before
 // (open, for development).
 const ADMIN_USER = process.env.H5P_ADMIN_USER || 'admin';
+// The language of the login page, the editor and its buttons: "en" or "nl". Unset: the login page follows the
+// browser and the editor is English (as before)
+const UI_LANGUAGE = ['en', 'nl'].includes(process.env.H5P_UI_LANGUAGE) ? process.env.H5P_UI_LANGUAGE : '';
+const EDITOR_LANGUAGE = UI_LANGUAGE || 'en';
+const EDITOR_BUTTONS = { en: { save: 'Save', create: 'Create', cancel: 'Cancel' }, nl: { save: 'Opslaan', create: 'Maken', cancel: 'Annuleren' } }[EDITOR_LANGUAGE];
 const ADMIN_PASSWORD = process.env.H5P_ADMIN_PASSWORD || '';
 const PROTECTED = ADMIN_PASSWORD !== '';
 const PUBLIC_ORIGIN = new URL(H5P_BASE_URL).origin;
@@ -102,6 +109,14 @@ function hasSession(req) {
 }
 const sessionCookie = (value, seconds) =>
     `${SESSION_COOKIE}=${value}; Path=/; Max-Age=${seconds}; HttpOnly; SameSite=Lax${SECURE_COOKIE ? '; Secure' : ''}`;
+
+// Accounts (opt-in): H5P_ACCOUNTS names a file of extra logins, each tied to one organisation (see accounts.js)
+const ACCOUNTS_FILE = process.env.H5P_ACCOUNTS || '';
+if (ACCOUNTS_FILE && !PROTECTED) { console.error('H5P_ACCOUNTS needs protected mode (set H5P_ADMIN_PASSWORD)'); process.exit(1); }
+const accounts = ACCOUNTS_FILE ? loadAccounts({ file: ACCOUNTS_FILE, dataPath: H5P_DATA_PATH, secret: ADMIN_PASSWORD, adminUser: ADMIN_USER }) : null;
+const ACCOUNT_COOKIE = SECURE_COOKIE ? '__Host-h5p_account' : 'h5p_account';
+const accountCookie = (value, seconds) =>
+    `${ACCOUNT_COOKIE}=${value}; Path=/; Max-Age=${seconds}; HttpOnly; SameSite=Lax${SECURE_COOKIE ? '; Secure' : ''}`;
 
 function isAdminRequest(req) {
     if (hasSession(req)) return true;
@@ -162,12 +177,14 @@ function editorSession(req) {
     // Logging out of the admin account (or a new password) ends editor sessions too
     return e && e.exp > now() && e.epoch === sessionEpoch ? e : null;
 }
+// The H5P editor's own ajax actions (no installs, uploads of libraries or hub downloads, which install libraries too)
+const EDITOR_AJAX = new Set(['content-type-cache', 'content-hub-metadata-cache', 'libraries', 'translations', 'files', 'filter']);
 // What an editor session may request: its own editor page and saves, and what the H5P editor loads
 function editorMayUse(e, req) {
     const p = req.path;
     if (p === '/new') return e.scope === 'new';
     if (p.startsWith('/edit/') || p.startsWith('/params/')) return e.scope === 'edit' && p.split('/')[2] === e.contentId && p.split('/').length === 3;
-    if (p === '/h5p/ajax') return !['library-install', 'library-upload'].includes(req.query.action);
+    if (p === '/h5p/ajax') return EDITOR_AJAX.has(req.query.action);
     return req.method === 'GET' && /^\/(h5p\/editor|temp-files|editor-assets)\//.test(p);
 }
 // The return URL after a save: an editor session goes back to its tool, with the save signed
@@ -195,7 +212,7 @@ const LOGIN_TEXT = {
 };
 const htmlText = (v) => String(v).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 function loginPage(req, { next = '/', message = '', user = '' } = {}) {
-    const lang = req.acceptsLanguages('en', 'nl') === 'nl' ? 'nl' : 'en', t = LOGIN_TEXT[lang];
+    const lang = UI_LANGUAGE || (req.acceptsLanguages('en', 'nl') === 'nl' ? 'nl' : 'en'), t = LOGIN_TEXT[lang];
     const note = typeof message === 'function' ? message(t) : message ? t[message] : '';
     return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${t.title}</title><style>
@@ -222,7 +239,16 @@ ${note ? `<p class="note${message === 'out' ? ' out' : ''}" role="alert">${htmlT
 }
 
 // The tool's ticket becomes an editor session for one scope (only with H5P_TOOL_SECRET)
-app.use((req, res, next) => { req.editor = editorSession(req); next(); });
+app.use((req, res, next) => {
+    res.on('close', () => {
+        for (const f of Object.values(req.files || {}).flat()) if (f?.tempFilePath) fs.unlink(f.tempFilePath).catch(() => {});
+    });
+    // Lumi's error handler can call res.status(NaN) (e.g. a failed hub download), which throws and ends the process
+    const status = res.status.bind(res);
+    res.status = (code) => status(Number.isInteger(code) && code >= 100 && code <= 599 ? code : 500);
+    next();
+});
+app.use((req, res, next) => { req.editor = editorSession(req); req.accountSession = accounts ? accounts.read(cookieValue(req, ACCOUNT_COOKIE)) : null; next(); });
 app.get('/editor/start', (req, res) => {
     const t = readTicket(req.query.ticket);
     res.set('Cache-Control', 'no-store');
@@ -262,7 +288,17 @@ if (PROTECTED) {
         if (wait) return res.status(429).type('html').send(loginPage(req, { next, user, message: (t) => t.wait(wait) }));
         if (sameSecret(user, ADMIN_USER) & sameSecret(password, ADMIN_PASSWORD)) {
             failures.delete(ip);
-            return res.set('Set-Cookie', sessionCookie(newSession(), SESSION_SECONDS)).redirect(303, next);
+            const cookies = [sessionCookie(newSession(), SESSION_SECONDS)];
+            if (accounts) cookies.push(accountCookie('', 0));
+            return res.set('Set-Cookie', cookies).redirect(303, next);
+        }
+        const account = accounts && accounts.login(user, password);
+        if (account) {
+            failures.delete(ip);
+            const [nextPath, nextQuery = ''] = next.split('?');
+            const mayGo = next !== '/' && accounts.mayUse(account, { path: nextPath.split('#')[0], method: 'GET', query: Object.fromEntries(new URLSearchParams(nextQuery)) });
+            return res.set('Set-Cookie', [accountCookie(accounts.issue(account, SESSION_SECONDS), SESSION_SECONDS), sessionCookie('', 0)])
+                .redirect(303, mayGo ? next : account.home);
         }
         failed(ip);
         res.status(401).type('html').send(loginPage(req, { next, user, message: 'failed' }));
@@ -270,7 +306,8 @@ if (PROTECTED) {
     app.post('/logout', (req, res) => {
         if (fromOtherSite(req)) return res.status(403).type('text/plain').send('Cross-site request refused');
         if (isAdminRequest(req)) endAllSessions();
-        noStore(res).set('Set-Cookie', sessionCookie('', 0)).redirect(303, '/login?out');
+        if (req.accountSession) accounts.logout(req.accountSession);
+        noStore(res).set('Set-Cookie', accounts ? [sessionCookie('', 0), accountCookie('', 0)] : sessionCookie('', 0)).redirect(303, '/login?out');
     });
 
     app.use((req, res, next) => {
@@ -290,6 +327,19 @@ if (PROTECTED) {
             return next();
         }
         req.editor = null;   // outside its scope an editor session counts for nothing
+        // An account: its own allow-list (accounts.js), never the admin's routes
+        if (!isAdminRequest(req) && req.accountSession) {
+            const a = req.accountSession;
+            if (!accounts.mayUse(a, req)) {
+                if (isRead && req.path === '/' && req.get('sec-fetch-mode') === 'navigate') return res.redirect(303, a.home);
+                return res.status(403).type('text/plain').send('Not available for this account');
+            }
+            if (!isRead && fromOtherSite(req)) return res.status(403).type('text/plain').send('Cross-site request refused');
+            req.account = { user: a.user, org: a.org, uploads: a.uploads };
+            req.isAdmin = false;
+            res.set('Content-Security-Policy', "frame-ancestors 'self'");
+            return next();
+        }
         if (!isAdminRequest(req)) {
             if (sentCredentials) failed(req.ip);
             const mode = req.get('sec-fetch-mode');
@@ -355,31 +405,46 @@ const h5pBasePath = H5P_DATA_PATH;
 if (process.env.H5P_EDITOR_ASSETS) app.use('/editor-assets', express.static(path.resolve(process.env.H5P_EDITOR_ASSETS)));
 app.use('/h5p/core', express.static(path.join(h5pBasePath, 'core')));
 app.use('/h5p/editor', express.static(path.join(h5pBasePath, 'editor')));
-app.use('/h5p/content', express.static(path.join(h5pBasePath, 'content')));
+// Uploaded files are served from this origin: a file that a browser would run as a page (html, xml, svg) gets a sandbox
+// without same-origin, so its script cannot act as the person who opens it; nothing is sniffed into something else
+const ACTIVE_FILE = /\.(html?|xhtml|xml|xsl|svgz?)$/i;
+const safeFileHeaders = (res, file) => {
+    res.set('X-Content-Type-Options', 'nosniff');
+    if (ACTIVE_FILE.test(file)) res.set('Content-Security-Policy', 'sandbox allow-scripts allow-forms allow-popups');
+};
+app.use('/h5p/content', express.static(path.join(h5pBasePath, 'content'), { setHeaders: safeFileHeaders }));
 app.use('/h5p/libraries', express.static(path.join(h5pBasePath, 'libraries')));
 
 // Temp files: H5P stores them in user-specific subdirectories but generates URLs without user prefix
 // So we need to search across all user directories
 app.use('/temp-files', async (req, res, next) => {
     const requestedPath = req.path; // e.g., /videos/video-abc123.mp4
-    const tempDir = path.join(h5pBasePath, 'temp');
+    // an account sees only its own editor files (Lumi keeps them in temp/<user id>/)
+    const tempDir = req.account ? path.join(h5pBasePath, 'temp', createUser(req).id) : path.join(h5pBasePath, 'temp');
+    const send = (file) => { safeFileHeaders(res, file); return res.sendFile(file); };
+    // only files inside the temp folder: a raw "../" in the path (not removed by express) must not climb out
+    const inside = (file) => path.resolve(file).startsWith(path.resolve(tempDir) + path.sep);
+    if (requestedPath.split('/').some((seg) => seg === '..' || seg === '.')) return res.status(400).type('text/plain').send('Bad path');
 
     // First try direct path (in case it's there)
     const directPath = path.join(tempDir, requestedPath);
     try {
+        if (!inside(directPath)) throw new Error('outside');
         await fs.access(directPath);
-        return res.sendFile(directPath);
+        if ((await fs.stat(directPath)).isFile()) return send(directPath);
     } catch {}
 
     // Search in user subdirectories
+    if (req.account) return next();
     try {
         const entries = await fs.readdir(tempDir, { withFileTypes: true });
         for (const entry of entries) {
             if (entry.isDirectory()) {
                 const userPath = path.join(tempDir, entry.name, requestedPath);
                 try {
+                    if (!inside(userPath)) throw new Error('outside');
                     await fs.access(userPath);
-                    return res.sendFile(userPath);
+                    return send(userPath);
                 } catch {}
             }
         }
@@ -392,6 +457,8 @@ app.use('/temp-files', async (req, res, next) => {
 const librariesPath = path.join(h5pBasePath, 'libraries');
 const contentPath = path.join(h5pBasePath, 'content');
 const tempPath = path.join(h5pBasePath, 'temp');
+// express-fileupload's raw copies: not under temp/ (which /temp-files serves), and removed after each request
+const uploadTmpPath = path.join(h5pBasePath, 'upload-tmp');
 const configPath = path.join(h5pBasePath, 'config.json');
 
 // Ensure directories exist
@@ -399,6 +466,7 @@ async function ensureDirectories() {
     await fs.mkdir(librariesPath, { recursive: true });
     await fs.mkdir(contentPath, { recursive: true });
     await fs.mkdir(tempPath, { recursive: true });
+    await fs.mkdir(uploadTmpPath, { recursive: true });
 
     // Create default config if not exists
     try {
@@ -422,6 +490,7 @@ async function ensureDirectories() {
 
 // Create a simple user object (in production, get from session/auth)
 function createUser(req) {
+    if (req.account) return { id: 'account-' + req.account.user, name: req.account.user, email: '', type: 'local' };
     if (req.editor) {
         const id = 'editor-' + createHash('sha256').update(req.editor.sub).digest('hex').slice(0, 16);
         return { id, name: 'Teacher', email: '', type: 'local' };
@@ -620,7 +689,7 @@ async function setupRoutes() {
     app.use('/h5p/ajax', fileUpload({
         limits: { fileSize: 500 * 1024 * 1024 }, // 500MB max file size
         useTempFiles: true,
-        tempFileDir: tempPath
+        tempFileDir: uploadTmpPath
     }));
 
     // Mount the H5P AJAX router at root level
@@ -819,7 +888,7 @@ app.get('/edit/:contentId', async (req, res) => {
         const user = createUser(req);
         const editorHtml = await h5pEditor.render(
             req.params.contentId,
-            'en',
+            EDITOR_LANGUAGE,
             user
         );
 
@@ -831,7 +900,7 @@ app.get('/edit/:contentId', async (req, res) => {
 });
 
 // Edit existing content (POST - save from built-in form or our JSON handler)
-app.post('/edit/:contentId', fileUpload({ useTempFiles: true, tempFileDir: tempPath }), async (req, res) => {
+app.post('/edit/:contentId', fileUpload({ useTempFiles: true, tempFileDir: uploadTmpPath }), async (req, res) => {
     try {
         const user = createUser(req);
         const contentId = req.params.contentId;
@@ -876,7 +945,7 @@ app.get('/new', async (req, res) => {
         const user = createUser(req);
         const editorHtml = await h5pEditor.render(
             undefined,  // No content ID = new content
-            'en',
+            EDITOR_LANGUAGE,
             user
         );
 
@@ -889,7 +958,7 @@ app.get('/new', async (req, res) => {
 
 // Create new content (POST - save from built-in form)
 // Use fileUpload middleware since form uses multipart/form-data
-app.post('/new', fileUpload({ useTempFiles: true, tempFileDir: tempPath }), async (req, res) => {
+app.post('/new', fileUpload({ useTempFiles: true, tempFileDir: uploadTmpPath }), async (req, res) => {
     try {
         const user = createUser(req);
         // Form fields come from req.body when using express-fileupload
@@ -916,6 +985,8 @@ app.post('/new', fileUpload({ useTempFiles: true, tempFileDir: tempPath }), asyn
             user
         );
 
+        // Content an account makes belongs to its organisation (so the account may edit it again)
+        if (req.account) accounts.setOrg(String(savedId.id), req.account.org);
         const redirectUrl = savedReturnUrl(req, returnUrl, savedId.id, metadata.title) || `/edit/${savedId.id}`;
 
         // Always return JSON for the client-side interception to catch
@@ -956,7 +1027,7 @@ app.post('/api/save', async (req, res) => {
 // Import an .h5p package: POST /api/import[?contentId=<id>], multipart field "file".
 // Installs or updates the package's libraries. With contentId the content gets that id
 // and replaces an existing item with the same id (stable public URLs on re-import).
-app.post('/api/import', fileUpload({ useTempFiles: true, tempFileDir: tempPath, limits: { fileSize: 500 * 1024 * 1024 } }), async (req, res) => {
+app.post('/api/import', fileUpload({ useTempFiles: true, tempFileDir: uploadTmpPath, limits: { fileSize: 500 * 1024 * 1024 } }), async (req, res) => {
     const file = req.files?.file;
     const contentId = req.query.contentId;
     try {
@@ -1015,8 +1086,8 @@ function wrapEditorHtml(editorHtml, contentId, returnUrl) {
 
     const cancelScript = `
     <div class="h5p-editor-buttons">
-        <button type="button" id="save-h5p-clone" class="button button-primary button-large" style="padding: 10px 20px; font-size: 16px; background: #21759b; color: white; border: none; border-radius: 4px; cursor: pointer;">${contentId ? 'Save' : 'Create'}</button>
-        <button type="button" class="btn-cancel" onclick="cancelH5PEdit()">Cancel</button>
+        <button type="button" id="save-h5p-clone" class="button button-primary button-large" style="padding: 10px 20px; font-size: 16px; background: #21759b; color: white; border: none; border-radius: 4px; cursor: pointer;">${contentId ? EDITOR_BUTTONS.save : EDITOR_BUTTONS.create}</button>
+        <button type="button" class="btn-cancel" onclick="cancelH5PEdit()">${EDITOR_BUTTONS.cancel}</button>
     </div>
     <script>
         const h5pReturnUrl = ${jsLiteral(httpUrlOrNull(returnUrl))};

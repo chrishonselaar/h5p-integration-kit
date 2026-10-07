@@ -47,6 +47,17 @@ jobs:
           PACKAGE=../demo/moodle/fixtures/multiple-choice.h5p
           node test/editor-tickets.mjs http://localhost:3300 ci-admin ci-tool $PACKAGE
           node test/protected-mode.mjs http://localhost:3300 ci-admin $PACKAGE
+      - name: Accounts (and the protected-mode checks again, with accounts on)
+        run: |
+          mkdir -p "$RUNNER_TEMP/acc" && cp -r h5p/core h5p/editor "$RUNNER_TEMP/acc/"
+          node test/accounts.mjs make "$RUNNER_TEMP/accounts.json" ci-account-pw
+          PORT=3350 H5P_BASE_URL=http://localhost:3350 H5P_DATA_PATH="$RUNNER_TEMP/acc" H5P_ADMIN_PASSWORD=ci-admin \
+            H5P_TOOL_SECRET=ci-tool H5P_ACCOUNTS="$RUNNER_TEMP/accounts.json" node src/index.js > "$RUNNER_TEMP/acc.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf localhost:3350/health && break; sleep 1; done
+          PACKAGE=../demo/moodle/fixtures/multiple-choice.h5p
+          node test/accounts.mjs http://localhost:3350 ci-admin ci-account-pw $PACKAGE
+          node test/protected-mode.mjs http://localhost:3350 ci-admin $PACKAGE
+          node test/editor-tickets.mjs http://localhost:3350 ci-admin ci-tool $PACKAGE
       - name: Escaping (open server)
         run: |
           mkdir -p "$RUNNER_TEMP/open" && cp -r h5p/core h5p/editor "$RUNNER_TEMP/open/"
