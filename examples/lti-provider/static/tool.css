@@ -28,6 +28,8 @@ ul.items li.new { background: color-mix(in srgb, var(--ok) 10%, transparent); pa
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .actions form { margin: 0; }
 .empty { color: var(--muted); padding: 20px 0; }
+.param { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.button.small { padding: 2px 10px; font-size: 13px; }
 .badge { font-size: 12px; color: var(--ok); font-weight: 600; margin-left: 6px; }
 .player { position: fixed; inset: 0; display: flex; flex-direction: column; }
 .player .bar { padding: 8px 16px; font-size: 13px; color: var(--muted); border-bottom: 1px solid var(--line); }

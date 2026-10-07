@@ -70,6 +70,18 @@ def test_picker_shows_only_own_content(world):
     assert 'Quiz of A' in page and 'Quiz of B' not in page
 
 
+def test_picker_without_deep_linking_shows_custom_parameter(world):
+    # An LMS without Deep Linking: the teacher pastes h5p_content_id into the custom parameters.
+    launch_id = 'lti1p3-launch-teacher_a_plain'
+    store.save_launch(launch_id=launch_id, platform_id=world['a'], deployment_id='1', user_id='teacher_a',
+                      resource_link_id='rl-plain', h5p_content_id=None, is_instructor=1, ags_claim=None)
+    platform = store.get_platform(world['a'])
+    store.DbCache().set(launch_id, {'iss': platform['issuer'], 'aud': platform['client_id']})
+    page = client_for(launch_id).get(f'/lti/picker?launch={launch_id}').get_data(as_text=True)
+    assert 'h5p_content_id=c-a' in page and 'c-b' not in page
+    assert 'Use this' not in page
+
+
 def test_launch_not_in_session_is_refused(world):
     assert client_for(world['teacher_a']).get(f"/lti/picker?launch={world['teacher_b']}").status_code == 403
 

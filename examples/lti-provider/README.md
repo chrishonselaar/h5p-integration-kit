@@ -12,6 +12,11 @@ What each person does:
 | Teacher | Adds an activity, picks existing H5P content or creates new content in the H5P editor | Deep Linking |
 | Student | Opens the activity and plays the content; the score lands in the gradebook | Resource link launch, Assignment and Grade Services (AGS) |
 
+LMSes without Deep Linking or Dynamic Registration work too. The admin registers the tool by hand
+(`flask --app app add-platform`, values from `/lti/config`). A teacher who opens an activity
+without content gets the content list, which shows a line like `h5p_content_id=…` under each
+item; pasted into the activity's custom parameters, it sets the content.
+
 Every connected LMS (a *platform*) is a separate tenant. Its teachers see and edit only the
 content made from that platform.
 

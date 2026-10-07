@@ -536,7 +536,8 @@ def lti_config():
         'redirect_uris': [f'{APP_URL}/lti/launch'],
         'jwks_url': f'{APP_URL}/.well-known/jwks.json',
         'deep_linking_url': f'{APP_URL}/lti/launch',
-        'custom_parameters': {'h5p_content_id': 'The H5P content to launch (set by Deep Linking)'},
+        'custom_parameters': {'h5p_content_id': 'The H5P content to launch (set by Deep Linking, or by hand: '
+                                                'the picker shows the line to paste)'},
         'scopes': [AGS_SCORE, AGS_LINEITEM, AGS_RESULT],
     })
 

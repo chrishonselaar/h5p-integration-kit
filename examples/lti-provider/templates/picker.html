@@ -6,7 +6,9 @@
 <p class="lead">Pick existing content or create new content. Students get the content you choose, and their score goes to the gradebook.</p>
 {% else %}
 <h1>H5P content of your organisation</h1>
-<p class="lead">This activity has no content yet. To give it content, edit the activity in your course and choose <em>Select content</em>.</p>
+<p class="lead">This activity has no content yet. To give it content, edit the activity in your course.
+  If the activity settings have a <em>Select content</em> button, use it. Otherwise copy the line under the
+  content you want and paste it into the activity's <em>Custom parameters</em>.</p>
 {% endif %}
 
 <div class="toolbar">
@@ -21,6 +23,10 @@
     <div>
       <span class="title">{{ c.title or 'Untitled' }}</span>{% if c.content_id == new_id %}<span class="badge">New</span>{% endif %}
       <div class="meta">Created {{ c.created_at.strftime('%d %b %Y') if c.created_at else '' }}</div>
+      {% if not deep_link %}
+      <div class="param"><code>h5p_content_id={{ c.content_id }}</code>
+        <button class="button small" type="button" data-copy="h5p_content_id={{ c.content_id }}">Copy</button></div>
+      {% endif %}
     </div>
     <div class="actions">
       <a class="button" href="{{ url_for('preview', content_id=c.content_id, launch=launch_id) }}" target="_blank" rel="noopener">Preview</a>
@@ -48,6 +54,15 @@
     var w = window.open(url, 'h5p-editor', 'width=1200,height=850');
     return !w;   // fall back to a normal link if the window was blocked
   }
+  // Copy a custom parameter line, for LMSes without Deep Linking.
+  document.querySelectorAll('[data-copy]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      navigator.clipboard.writeText(button.dataset.copy).then(function () {
+        button.textContent = 'Copied';
+        setTimeout(function () { button.textContent = 'Copy'; }, 1500);
+      });
+    });
+  });
   window.h5pSaved = function (contentId) {
     var url = new URL(window.location.href);
     if (contentId) url.searchParams.set('new', contentId);
