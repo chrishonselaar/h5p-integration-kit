@@ -949,11 +949,17 @@ app.post('/edit/:contentId', fileUpload({ useTempFiles: true, tempFileDir: uploa
 app.get('/new', async (req, res) => {
     try {
         const user = createUser(req);
-        const editorHtml = await h5pEditor.render(
+        let editorHtml = await h5pEditor.render(
             undefined,  // No content ID = new content
             EDITOR_LANGUAGE,
             user
         );
+        // ?library=H5P.Foo 1.2 opens the editor on that content type (installed ones only), without the type list
+        const library = await installedLibrary(req.query.library);
+        if (library) {
+            editorHtml = editorHtml.replace('h5peditor = new ns.Editor(undefined, undefined, $editor[0]);\n                $create.show();',
+                () => `h5peditor = new ns.Editor(${jsLiteral(library)}, undefined, $editor[0]);\n                $create.show();`);
+        }
 
         res.send(wrapEditorHtml(editorHtml, null, req.editor ? req.editor.returnUrl : req.query.returnUrl));
     } catch (error) {
@@ -961,6 +967,16 @@ app.get('/new', async (req, res) => {
         res.status(500).type('text/plain').send(`Error: ${error.message}`);
     }
 });
+
+// "H5P.Foo 1.2" when that library is installed (a folder H5P.Foo-1.2 with a library.json), else null
+async function installedLibrary(value) {
+    const m = typeof value === 'string' && /^([A-Za-z0-9._-]{1,100}) (\d{1,4})\.(\d{1,4})$/.exec(value);
+    if (!m) return null;
+    try {
+        const lib = JSON.parse(await fs.readFile(path.join(librariesPath, `${m[1]}-${m[2]}.${m[3]}`, 'library.json'), 'utf8'));
+        return lib.runnable ? `${m[1]} ${m[2]}.${m[3]}` : null;
+    } catch { return null; }
+}
 
 // Create new content (POST - save from built-in form)
 // Use fileUpload middleware since form uses multipart/form-data
