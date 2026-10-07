@@ -172,3 +172,11 @@ def test_registration_key_required_when_set(world, monkeypatch):
     c = tool.app.test_client()
     assert c.get('/lti/register?openid_configuration=https://x.example/c').status_code == 403
     assert c.get('/lti/register?key=secret-key').status_code == 200
+
+
+def test_purge_keeps_recent_launches(world):
+    before = store.get_launch(world['student_a'])
+    assert store.purge_older_than(1) == (0, 0)
+    assert store.get_launch(world['student_a']) == before
+    deleted_launches, _ = store.purge_older_than(-1)   # everything is "older" than tomorrow
+    assert deleted_launches >= 4 and store.get_launch(world['student_a']) is None

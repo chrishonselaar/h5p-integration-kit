@@ -15,6 +15,7 @@ Tables
 import json
 import os
 import time
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import (
     Column, DateTime, Float, ForeignKey, Integer, MetaData, String, Table, Text, UniqueConstraint,
@@ -161,6 +162,16 @@ def unsent_grades():
              .where(scores.c.sent_to_lms == 0).order_by(scores.c.id))
     with engine.connect() as conn:
         return [dict(r) for r in conn.execute(query).mappings()]
+
+
+def purge_older_than(days):
+    """Delete launches older than `days` days, with their scores. Returns (launches, scores) deleted."""
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=days)
+    old = select(launches.c.launch_id).where(launches.c.created_at < cutoff)
+    with engine.begin() as conn:
+        scores_deleted = conn.execute(delete(scores).where(scores.c.launch_id.in_(old))).rowcount
+        launches_deleted = conn.execute(delete(launches).where(launches.c.created_at < cutoff)).rowcount
+    return launches_deleted, scores_deleted
 
 
 # --- Content ownership ----------------------------------------------------------

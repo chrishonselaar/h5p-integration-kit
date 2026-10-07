@@ -478,7 +478,8 @@ def lti_register():
             'domain': urlparse(APP_URL).netloc,
             'target_link_uri': f'{APP_URL}/lti/launch',
             'description': 'Interactive H5P content, hosted outside the LMS',
-            'claims': ['iss', 'sub', 'name', 'given_name', 'family_name', 'email'],
+            # Only the LMS's own pseudonymous user id: the tool needs no names or e-mail addresses
+            'claims': ['iss', 'sub'],
             'messages': [
                 {'type': 'LtiResourceLinkRequest', 'target_link_uri': f'{APP_URL}/lti/launch'},
                 {'type': 'LtiDeepLinkingRequest', 'target_link_uri': f'{APP_URL}/lti/launch',
@@ -575,6 +576,14 @@ def assign_content_command(content_id, platform_id):
     if not store.claim_content(content_id, platform_id, response.json().get('title'), 'admin'):
         raise click.ClickException('That content belongs to another platform.')
     click.echo(f'Content {content_id} now belongs to platform {platform_id}.')
+
+
+@app.cli.command('purge')
+@click.option('--days', default=400, show_default=True, help='Keep launches and scores this many days.')
+def purge_command(days):
+    """Delete launches and scores older than --days (data retention)."""
+    launches_deleted, scores_deleted = store.purge_older_than(days)
+    click.echo(f'Deleted {launches_deleted} launches and {scores_deleted} scores older than {days} days.')
 
 
 @app.cli.command('retry-grades')

@@ -55,6 +55,8 @@ docker compose exec lti-tool flask --app app list-platforms
 ```bash
 # Send grades an LMS did not accept (e.g. it was down), every 15 minutes from cron:
 docker compose exec -T lti-tool flask --app app retry-grades
+# Data retention: delete launches and scores older than the agreed period, daily:
+docker compose exec -T lti-tool flask --app app purge --days 400
 ```
 
 ## Back up

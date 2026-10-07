@@ -119,7 +119,16 @@ flask --app app list-platforms
 flask --app app add-platform ...           # see above
 flask --app app assign-content <content_id> <platform_id>
 flask --app app retry-grades               # e.g. from cron every 15 minutes
+flask --app app purge --days 400           # delete launches and scores older than 400 days
 ```
+
+## Personal data
+
+The tool asks the LMS for no names or e-mail addresses: its registration requests only `iss`
+and `sub`, the LMS's own pseudonymous user id. Moodle then sends neither, and the tool doesn't
+need them. The tool stores that id with each launch and score, plus who created which content.
+The LMS remains the place where grades and student identities live. `purge` deletes old launches
+and scores, for a retention period agreed with the customer.
 
 ## Tests
 
