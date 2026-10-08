@@ -313,7 +313,6 @@ This project stands on the shoulders of giants:
 Contributions welcome! Areas of interest:
 - Additional language examples (Ruby, Go, Java)
 - LTI 1.1 support
-- Deep linking implementation
 - More H5P content type examples
 
 ## Related Projects
