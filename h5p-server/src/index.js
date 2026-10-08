@@ -1272,6 +1272,13 @@ function wrapEditorHtml(editorHtml, contentId, returnUrl) {
 
     html = html.replace('</head>', crossOriginFix + '</head>');
 
+    // The editor page is the root of H5P's editor frames. H5P's own scripts read window.parent as if the page is not
+    // framed (h5peditor.js: `extend({}, window.parent.H5PEditor)`), and the rewrites above cannot reach those files.
+    // When a course editor on the same origin shows this page in a dialog, those reads reach that page, which has no
+    // H5P objects, and the editor starts without its settings. `parent` is a replaceable window property: pointing it
+    // at this window makes the page its own root again. The editor's inner frames still see this page as their parent.
+    html = html.replace('<head>', '<head>\n<script>window.parent = window;</script>');
+
     // Change button text from "Create" to "Save" when editing existing content
     if (contentId) {
         html = html.replace('value="Create"', 'value="Save"');
