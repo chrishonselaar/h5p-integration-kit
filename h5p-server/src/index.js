@@ -432,6 +432,17 @@ app.use((req, res, next) => {
 // Paths for H5P storage (defined early for static file serving)
 const h5pBasePath = H5P_DATA_PATH;
 
+// Someone who may make content but not install content types (see canInstall below) gets this in the
+// editor frame: it hides the H5P Hub's Upload tab, which uploads a .h5p package with its libraries.
+// Under /h5p/editor/ because that is where the editor's own assets live, a path an integrating
+// proxy leaves open.
+const NO_INSTALL_CSS = '/h5p/editor/kit/no-install.css';
+app.get(NO_INSTALL_CSS, (req, res) => {
+    res.type('text/css').send(
+        'li[role="tab"]:has(> a#h5p-hub-upload), #h5p-hub-tab-panel-h5p-hub-upload { display: none !important; }\n'
+    );
+});
+
 // Serve H5P core, editor, content, libraries and temp files BEFORE other routes
 // Extra files for editor widgets (e.g. a media catalogue an editor library reads), served at /editor-assets/.
 // Not public: in protected mode they need the admin login, like the editor itself.
@@ -531,7 +542,15 @@ async function ensureDirectories() {
 }
 
 // Create a simple user object (in production, get from session/auth)
+// canInstall: an integrating app that gates the editor (nginx auth_request) can send
+// `X-H5P-Install: no` for people who may make content but not install content types. They then see
+// only installed content types (no Hub "Get" buttons), no Upload tab, and installs are refused.
+// Without the header everyone may install, as before. The header can only take rights away.
 function createUser(req) {
+    return { ...userIdentity(req), canInstall: req.get('X-H5P-Install') !== 'no' };
+}
+
+function userIdentity(req) {
     if (req.account) return { id: 'account-' + req.account.user, name: req.account.user, email: '', type: 'local' };
     if (req.editor) {
         const id = 'editor-' + createHash('sha256').update(req.editor.sub).digest('hex').slice(0, 16);
@@ -586,6 +605,17 @@ function editorOptions(extraSubcontent) {
             }
         }
     };
+}
+
+// Everything is allowed, except installing and updating libraries for a user who may not install.
+class InstallPermissionSystem extends H5P.LaissezFairePermissionSystem {
+    async checkForGeneralAction(user, permission) {
+        if (permission === H5P.GeneralPermission.InstallRecommended ||
+            permission === H5P.GeneralPermission.UpdateAndInstallLibraries) {
+            return user?.canInstall !== false;
+        }
+        return true;
+    }
 }
 
 // Initialize H5P
@@ -668,8 +698,18 @@ async function initH5P() {
         undefined,           // 6. contentStorage (use default)
         translationCallback, // 7. translationCallback
         urlGenerator,        // 8. urlGenerator
-        editorOptions(await loadExtraSubcontent()) // 9. options
+        { ...editorOptions(await loadExtraSubcontent()), permissionSystem: new InstallPermissionSystem() } // 9. options
     );
+
+    // The Hub lists content types that are not installed here, each with a "Get" button. Someone who
+    // may not install sees only the installed ones.
+    const contentTypeCache = h5pEditor.getContentTypeCache.bind(h5pEditor);
+    h5pEditor.getContentTypeCache = async (user, language) => {
+        const cache = await contentTypeCache(user, language);
+        return user?.canInstall === false
+            ? { ...cache, libraries: cache.libraries.filter((library) => library.installed) }
+            : cache;
+    };
 
     // Create a proper H5PPlayer instance for playing content
     h5pPlayer = new H5P.H5PPlayer(
@@ -946,7 +986,7 @@ app.get('/edit/:contentId', async (req, res) => {
             user
         );
 
-        res.send(wrapEditorHtml(editorHtml, req.params.contentId, req.editor ? req.editor.returnUrl : req.query.returnUrl));
+        res.send(wrapEditorHtml(editorHtml, req.params.contentId, req.editor ? req.editor.returnUrl : req.query.returnUrl, user));
     } catch (error) {
         console.error('Error rendering editor:', error);
         res.status(500).type('text/plain').send(`Error: ${error.message}`);
@@ -1009,7 +1049,7 @@ app.get('/new', async (req, res) => {
                 () => `h5peditor = new ns.Editor(${jsLiteral(library)}, undefined, $editor[0]);\n                $create.show();`);
         }
 
-        res.send(wrapEditorHtml(editorHtml, null, req.editor ? req.editor.returnUrl : req.query.returnUrl));
+        res.send(wrapEditorHtml(editorHtml, null, req.editor ? req.editor.returnUrl : req.query.returnUrl, user));
     } catch (error) {
         console.error('Error rendering editor:', error);
         res.status(500).type('text/plain').send(`Error: ${error.message}`);
@@ -1122,7 +1162,7 @@ app.post('/api/import', fileUpload({ useTempFiles: true, tempFileDir: uploadTmpP
 });
 
 // Helper function to wrap editor HTML with cancel button and styling
-function wrapEditorHtml(editorHtml, contentId, returnUrl) {
+function wrapEditorHtml(editorHtml, contentId, returnUrl, user) {
     // Add styling and a cancel button (the built-in Create/Save button handles saving)
 
     const customStyles = `
@@ -1229,6 +1269,10 @@ function wrapEditorHtml(editorHtml, contentId, returnUrl) {
     // Inject styles after <head> and cancel button/script before </body>
     let html = editorHtml;
     html = html.replace('</head>', customStyles + '</head>');
+    if (user?.canInstall === false) {
+        // The editor frame loads H5PIntegration.editor.assets.css; this runs before the editor starts.
+        html = html.replace('</head>', `<script>H5PIntegration.editor.assets.css.push(${jsLiteral(H5P_BASE_URL + NO_INSTALL_CSS)});</script></head>`);
+    }
     html = html.replace('</body>', cancelScript + '</body>');
 
     // Fix cross-origin frame access errors by wrapping parent access in try-catch
