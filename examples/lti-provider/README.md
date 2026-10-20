@@ -54,7 +54,9 @@ gunicorn --preload -w 4 -b 0.0.0.0:5001 app:app
 
 The H5P server should run in protected mode (`H5P_ADMIN_PASSWORD`) with the same
 `H5P_TOOL_SECRET`. Then playing content is public, and editing is only possible with the admin
-password or a ticket from this tool.
+password or a ticket from this tool. If the H5P server makes an organisation's content private
+(`H5P_PRIVATE_ORGS`), this tool's player carries a signed play pass (8 hours), so students still
+open it from their course.
 
 ## Connect an LMS
 

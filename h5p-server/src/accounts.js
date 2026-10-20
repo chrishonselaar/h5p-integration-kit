@@ -55,19 +55,12 @@ function validate(list, adminUser) {
     }
 }
 
-export function loadAccounts({ file, dataPath, secret, adminUser }) {
-    const list = JSON.parse(readFileSync(file, 'utf8'));
-    validate(list, adminUser);
-    const byUser = new Map(list.map((a) => [a.user, { ...a, allow: a.allow || [], uploads: !!a.uploads }]));
-
-    const epochFile = path.join(dataPath, 'account-epochs.json');
-    let epochs = {};
-    try { epochs = JSON.parse(readFileSync(epochFile, 'utf8')); } catch { /* nobody logged out yet */ }
-
-    // content -> organisation, read again whenever the file changes (an admin or an import may write it)
+// content -> organisation (<data path>/content-orgs.json), read again whenever the file changes (an admin or an import
+// may write it). Returns a function that gives the current map.
+export function contentOrgMap(dataPath) {
     const orgFile = path.join(dataPath, 'content-orgs.json');
     let orgs = {}, orgStamp = null;
-    const contentOrgs = () => {
+    return () => {
         try {
             const stamp = statSync(orgFile).mtimeMs;
             if (stamp !== orgStamp) { orgs = JSON.parse(readFileSync(orgFile, 'utf8')); orgStamp = stamp; }
@@ -77,6 +70,19 @@ export function loadAccounts({ file, dataPath, secret, adminUser }) {
         }
         return orgs;
     };
+}
+
+export function loadAccounts({ file, dataPath, secret, adminUser }) {
+    const list = JSON.parse(readFileSync(file, 'utf8'));
+    validate(list, adminUser);
+    const byUser = new Map(list.map((a) => [a.user, { ...a, allow: a.allow || [], uploads: !!a.uploads }]));
+
+    const epochFile = path.join(dataPath, 'account-epochs.json');
+    let epochs = {};
+    try { epochs = JSON.parse(readFileSync(epochFile, 'utf8')); } catch { /* nobody logged out yet */ }
+
+    const orgFile = path.join(dataPath, 'content-orgs.json');
+    const contentOrgs = contentOrgMap(dataPath);
 
     // Session cookie "<payload>.<HMAC>", payload = base64url JSON { u, iat (ms), exp (s) }. The key includes the
     // account's password hash, so a new password ends its sessions

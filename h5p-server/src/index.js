@@ -20,7 +20,7 @@ import { readFileSync, writeFileSync } from 'fs';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { BlockList } from 'net';
 import * as H5P from '@lumieducation/h5p-server';
-import { loadAccounts } from './accounts.js';
+import { loadAccounts, contentOrgMap } from './accounts.js';
 import { createRequire } from 'module';
 
 // Lumi's own editor page template (wrapped below so its inline JSON is escaped)
@@ -70,7 +70,7 @@ const EDITOR_BUTTONS = { en: { save: 'Save', create: 'Create', cancel: 'Cancel' 
 const ADMIN_PASSWORD = process.env.H5P_ADMIN_PASSWORD || '';
 const PROTECTED = ADMIN_PASSWORD !== '';
 const PUBLIC_ORIGIN = new URL(H5P_BASE_URL).origin;
-const PUBLIC_PATHS = /^\/(health$|play\/[^/]+$|h5p\/(core|libraries|content)\/)/;
+const PUBLIC_PATHS = /^\/(health$|play\/[^/]+$|h5p\/(core|libraries|content|pass)\/)/;
 
 const sameSecret = (a, b) => timingSafeEqual(createHash('sha256').update(a).digest(), createHash('sha256').update(b).digest());
 
@@ -201,6 +201,33 @@ function savedReturnUrl(req, returnUrl, contentId, title) {
     if (req.editor) url.searchParams.set('sig', toolMac(`h5p-editor-saved.${req.editor.jti}.${contentId}`));
     return url.toString();
 }
+
+// Private organisations (opt-in, protected mode): H5P_PRIVATE_ORGS lists organisations (comma-separated, as in
+// content-orgs.json) whose content is not public. Its player (/play/:id) and its files (/h5p/content/:id/...) open only
+// for the admin, an account of that organisation, or an editor session for that organisation or that content. An LTI
+// tool opens it for students with a play pass: /play/:id?pass=<payload>.<HMAC>, signed with H5P_TOOL_SECRET like an
+// editor ticket (payload: base64url JSON { contentId, exp }, exp at most 24 hours ahead; HMAC of
+// "h5p-play-pass.<payload>"). The player then fetches that content's files under /h5p/pass/<pass>/<id>/, so they load
+// in the LMS's iframe without cookies. A pass works for one content until it expires. All other content stays public.
+const PRIVATE_ORGS = new Set((process.env.H5P_PRIVATE_ORGS || '').split(',').map((s) => s.trim()).filter(Boolean));
+if (PRIVATE_ORGS.size && !PROTECTED) { console.error('H5P_PRIVATE_ORGS needs protected mode (set H5P_ADMIN_PASSWORD)'); process.exit(1); }
+const contentOrgs = PRIVATE_ORGS.size ? contentOrgMap(H5P_DATA_PATH) : () => ({});
+const orgOfContent = (contentId) => contentOrgs()[contentId] || null;
+const isPrivate = (contentId) => PRIVATE_ORGS.has(orgOfContent(contentId));
+const PASS_SECONDS_MAX = 24 * 3600;
+function validPass(pass, contentId) {
+    if (!TOOL_SECRET || typeof pass !== 'string') return false;
+    const p = signedJson(pass, (payload) => toolMac('h5p-play-pass.' + payload));
+    return !!p && String(p.contentId) === String(contentId) && Number.isInteger(p.exp) && p.exp > now() && p.exp <= now() + PASS_SECONDS_MAX;
+}
+function mayOpenPrivate(req, contentId) {
+    if (isAdminRequest(req)) return true;
+    const org = orgOfContent(contentId);
+    if (req.accountSession && req.accountSession.org === org) return true;
+    const e = req.editor;
+    return !!e && (e.org === org || (e.scope === 'edit' && e.contentId === String(contentId)));
+}
+const NOT_PUBLIC = 'This content is not public. Open it from the course it belongs to.';
 
 // Where /login sends the browser next: only a path on this server ("/x"; not "//host", "/\host" or a scheme)
 const localPathOr = (value, fallback) =>
@@ -418,7 +445,16 @@ const safeFileHeaders = (res, file) => {
     res.set('X-Content-Type-Options', 'nosniff');
     if (ACTIVE_FILE.test(file)) res.set('Content-Security-Policy', 'sandbox allow-scripts allow-forms allow-popups');
 };
+// Files of private content (H5P_PRIVATE_ORGS): only for whoever may open it, or under a play pass
+app.use('/h5p/content/:contentId', (req, res, next) =>
+    (isPrivate(req.params.contentId) && !mayOpenPrivate(req, req.params.contentId) ? res.status(403).type('text/plain').send(NOT_PUBLIC) : next()));
 app.use('/h5p/content', express.static(path.join(h5pBasePath, 'content'), { setHeaders: safeFileHeaders }));
+app.use('/h5p/pass/:pass/:contentId', (req, res, next) => {
+    const { pass, contentId } = req.params;
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(contentId) || !validPass(pass, contentId)) return res.status(403).type('text/plain').send(NOT_PUBLIC);
+    res.set('Cache-Control', 'private, max-age=3600');
+    express.static(path.join(h5pBasePath, 'content', contentId), { setHeaders: safeFileHeaders, fallthrough: false })(req, res, next);
+});
 app.use('/h5p/libraries', express.static(path.join(h5pBasePath, 'libraries')));
 
 // Temp files: H5P stores them in user-specific subdirectories but generates URLs without user prefix
@@ -801,6 +837,12 @@ app.get('/play/:contentId', async (req, res) => {
     try {
         const user = createUser(req);
         const contentId = req.params.contentId;
+        // Private content (H5P_PRIVATE_ORGS): a play pass, or a login that may open it
+        const pass = isPrivate(contentId) && validPass(req.query.pass, contentId) ? req.query.pass : '';
+        if (isPrivate(contentId)) {
+            if (!pass && !mayOpenPrivate(req, contentId)) return res.status(403).type('text/plain').send(NOT_PUBLIC);
+            res.set('Cache-Control', 'private, no-store');
+        }
         // Optional webhook URL for xAPI events (if not provided, only postMessage is used).
         // Not in protected mode: a public link must not send results elsewhere.
         const webhookUrl = PROTECTED ? '' : (httpUrlOrNull(req.query.webhookUrl) || '');
@@ -880,6 +922,8 @@ app.get('/play/:contentId', async (req, res) => {
 
         // Inject xAPI script before </body>
         playerHtml = playerHtml.replace('</body>', xapiScript + '\n</body>');
+        // Under a pass the content's own files come from /h5p/pass/<pass>/<id>/ (no cookie in an LMS iframe)
+        if (pass) playerHtml = playerHtml.split(`${H5P_BASE_URL}/h5p/content/${contentId}`).join(`${H5P_BASE_URL}/h5p/pass/${pass}/${contentId}`);
 
         res.send(playerHtml);
     } catch (error) {

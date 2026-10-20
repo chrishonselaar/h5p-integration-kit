@@ -2,7 +2,7 @@
 {% block body %}
 <div class="player">
   {% if preview %}<div class="bar">Preview. Your answers here do not count as a grade.</div>{% endif %}
-  <iframe src="{{ h5p_server }}/play/{{ content_id }}" title="H5P content" allow="fullscreen; autoplay"></iframe>
+  <iframe src="{{ player_src }}" title="H5P content" allow="fullscreen; autoplay"></iframe>
 </div>
 {% if not preview %}
 <script>

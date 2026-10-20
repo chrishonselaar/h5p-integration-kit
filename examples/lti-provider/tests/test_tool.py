@@ -137,6 +137,31 @@ def test_editor_ticket_carries_the_organisation_when_set(world, monkeypatch):
     assert valid and with_org['org'] == 'team-a'
 
 
+def play_pass(html):
+    """The pass in the player iframe: (payload, valid signature)."""
+    import re
+    src = re.search(r'<iframe src="([^"]+)"', html).group(1).replace('&amp;', '&')
+    passes = parse_qs(urlparse(src).query).get('pass')
+    if not passes:
+        return None, False
+    payload, sig = passes[0].split('.')
+    expected = base64.urlsafe_b64encode(hmac.new(b'test-secret', f'h5p-play-pass.{payload}'.encode(),
+                                                 hashlib.sha256).digest()).rstrip(b'=').decode()
+    return json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4))), hmac.compare_digest(sig, expected)
+
+
+def test_player_carries_a_play_pass_for_its_content(world):
+    html = client_for(world['teacher_a']).get(f"/lti/preview/c-a?launch={world['teacher_a']}").get_data(as_text=True)
+    p, valid = play_pass(html)
+    assert valid and p['contentId'] == 'c-a' and 0 < p['exp'] - tool.time.time() <= 24 * 3600
+
+
+def test_player_without_secret_has_no_pass(world, monkeypatch):
+    monkeypatch.setattr(tool, 'H5P_TOOL_SECRET', '')
+    html = client_for(world['teacher_a']).get(f"/lti/preview/c-a?launch={world['teacher_a']}").get_data(as_text=True)
+    assert play_pass(html) == (None, False) and '/play/c-a"' in html
+
+
 def test_editor_done_needs_h5p_server_signature(world):
     c, ticket, _ = editor_ticket(world)
     done = f"/lti/editor/done?launch={world['teacher_a']}&ticket={ticket['jti']}&contentId=c-new&title=New"

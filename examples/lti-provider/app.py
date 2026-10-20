@@ -26,7 +26,7 @@ import os
 import secrets
 import time
 from datetime import datetime, timezone
-from urllib.parse import urlencode, urlparse
+from urllib.parse import quote, urlencode, urlparse
 
 import click
 import requests
@@ -185,6 +185,21 @@ def tool_signature(message):
     return b64url(hmac.new(H5P_TOOL_SECRET.encode(), message.encode(), hashlib.sha256).digest())
 
 
+# How long a play pass lets the student's browser open the content (the H5P server accepts at most 24 hours)
+PLAY_PASS_SECONDS = 8 * 3600
+
+
+def player_src(content_id):
+    """The player URL for the iframe. With the shared secret it carries a signed play pass, so content of a
+    private organisation (the H5P server's H5P_PRIVATE_ORGS) opens for this launch; public content ignores it."""
+    src = f'{H5P_SERVER}/play/{quote(str(content_id), safe="")}'
+    if not H5P_TOOL_SECRET:
+        return src
+    payload = b64url(json.dumps({'contentId': str(content_id), 'exp': int(time.time()) + PLAY_PASS_SECONDS},
+                                separators=(',', ':')).encode())
+    return f'{src}?' + urlencode({'pass': f'{payload}.{tool_signature("h5p-play-pass." + payload)}'})
+
+
 def current_launch(launch_id, instructor=False):
     """The launch this browser session started; with instructor=True only for teachers."""
     if not launch_id or launch_id not in session.get('launches', []):
@@ -272,7 +287,7 @@ def lti_launch():
 
 def render_player(launch_id, content_id):
     return render_template('player.html', launch_id=launch_id, content_id=content_id,
-                           csrf=sign('score', launch_id))
+                           player_src=player_src(content_id), csrf=sign('score', launch_id))
 
 
 @app.route('/.well-known/jwks.json')
@@ -328,7 +343,7 @@ def preview(content_id):
     if not may_use_content(content_id, launch['platform_id']):
         abort(403, 'This content belongs to another organisation.')
     return render_template('player.html', launch_id=launch['launch_id'], content_id=content_id,
-                           csrf='', preview=True)
+                           player_src=player_src(content_id), csrf='', preview=True)
 
 
 @app.route('/lti/editor')

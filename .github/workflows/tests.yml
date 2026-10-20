@@ -58,6 +58,13 @@ jobs:
           node test/accounts.mjs http://localhost:3350 ci-admin ci-account-pw $PACKAGE
           node test/protected-mode.mjs http://localhost:3350 ci-admin $PACKAGE
           node test/editor-tickets.mjs http://localhost:3350 ci-admin ci-tool $PACKAGE
+      - name: Private organisations
+        run: |
+          mkdir -p "$RUNNER_TEMP/priv" && cp -r h5p/core h5p/editor "$RUNNER_TEMP/priv/"
+          PORT=3370 H5P_BASE_URL=http://localhost:3370 H5P_DATA_PATH="$RUNNER_TEMP/priv" H5P_ADMIN_PASSWORD=ci-admin \
+            H5P_TOOL_SECRET=ci-tool H5P_ACCOUNTS="$RUNNER_TEMP/accounts.json" H5P_PRIVATE_ORGS=team-a node src/index.js > "$RUNNER_TEMP/priv.log" 2>&1 &
+          for i in $(seq 1 60); do curl -sf localhost:3370/health && break; sleep 1; done
+          node test/private-orgs.mjs http://localhost:3370 ci-admin ci-account-pw ci-tool "$RUNNER_TEMP/priv" ../demo/moodle/fixtures/multiple-choice.h5p
       - name: Escaping (open server)
         run: |
           mkdir -p "$RUNNER_TEMP/open" && cp -r h5p/core h5p/editor "$RUNNER_TEMP/open/"

@@ -85,6 +85,7 @@ Environment variables:
 | `H5P_SESSION_HOURS` | `12` | How long a login on the login page lasts (protected mode) |
 | `H5P_TOOL_SECRET` | *(unset)* | Secret shared with an LTI tool (`examples/lti-provider`). Lets the tool open the editor for a teacher with a signed ticket, without the admin login; see *Editor tickets* below. Unset means no tickets |
 | `H5P_ACCOUNTS` | *(unset)* | Path to a JSON file of extra logins, each tied to one organisation (protected mode only); see *Accounts* below. Unset means only the admin login |
+| `H5P_PRIVATE_ORGS` | *(unset)* | Organisations (comma-separated, as in `content-orgs.json`) whose content is not public (protected mode only); see *Private organisations* below. Unset means every player is public |
 | `H5P_UI_LANGUAGE` | *(unset)* | `en` or `nl`: the language of the login page, the editor (H5P's own editor texts and the content types' language files) and the editor's buttons. Unset means the login page follows the browser and the editor is English |
 | `H5P_TRUST_PROXY` | *(one hop from a loopback/private address)* | Which proxies' `X-Forwarded-For` the server trusts for the client's address (Express `trust proxy` syntax); used to slow down wrong logins per address |
 | `H5P_EXTRA_SUBCONTENT` | *(unset)* | Path to a JSON file that lets containers accept extra content types, e.g. `{"H5P.Column": ["H5P.DeepZoomPage 0.1"], "H5P.QuestionSet": ["H5P.DeepZoomQuestion 0.1"]}`. H5P.Column, H5P.QuestionSet and similar containers only allow the sub-content types listed in their `semantics.json`; the editor removes any other type on save. Unset means stock behaviour |
@@ -144,6 +145,17 @@ When several teams share one server, give each its own login instead of the admi
 - **Logging out ends only that account's sessions.** A new password for the account ends them too, and so does a new admin password. Admin and accounts don't share a session: logging in as one logs the browser out of the other.
 
 Tests: `node test/accounts.mjs make <file> <accountPassword>` writes two test accounts; then `node test/accounts.mjs <baseUrl> <adminPassword> <accountPassword> <package.h5p>` against a protected server started with `H5P_ACCOUNTS=<file>`.
+
+### Private organisations (content that only opens from its course)
+
+By default every player is public: anyone with the link can play it. With `H5P_PRIVATE_ORGS=team-a`, content that `content-orgs.json` gives to `team-a` is not:
+
+- **`/play/<id>` and `/h5p/content/<id>/…` open only** for the admin, an account of that organisation, and an editor session for that organisation or that content. Everyone else gets 403.
+- **Students open it through the LTI tool,** which puts a signed play pass in the player's address: `/play/<id>?pass=<payload>.<HMAC>`. The payload is base64url JSON `{ "contentId", "exp" }`, `exp` at most 24 hours ahead, signed with `H5P_TOOL_SECRET` over `h5p-play-pass.<payload>`. The player then loads that content's own files from `/h5p/pass/<pass>/<id>/…`, so they work in the LMS's iframe without cookies.
+- **A pass opens one content until it expires.** Whoever has the address can use it in that time; it is not tied to a person.
+- **Files that a content loads from elsewhere** (for example zoom images on other storage) are not covered: they are as open as that storage.
+
+Tests: `node test/private-orgs.mjs <baseUrl> <adminPassword> <accountPassword> <toolSecret> <dataPath> <package.h5p>` against a protected server started with `H5P_ACCOUNTS` (the test accounts above), `H5P_TOOL_SECRET`, `H5P_PRIVATE_ORGS=team-a` and `H5P_DATA_PATH=<dataPath>`.
 
 Tests: `node test/protected-mode.mjs <baseUrl> <password> <package.h5p>` against a protected server, `node test/editor-tickets.mjs <baseUrl> <password> <toolSecret> <package.h5p>` against a protected server with `H5P_TOOL_SECRET`, and `node test/escaping.mjs <baseUrl> <contentId>` against an open one.
 
