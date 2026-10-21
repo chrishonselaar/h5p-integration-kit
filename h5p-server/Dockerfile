@@ -10,6 +10,10 @@ LABEL maintainer="Chris Honselaar"
 LABEL description="H5P Content Server for LMS Integration"
 LABEL license="GPL-3.0-or-later"
 
+# Pick up CA fixes released after the base image was built
+# (e.g. the removal of the compromised eMudhra roots, 2026-10-20)
+RUN apk upgrade --no-cache ca-certificates-bundle
+
 # Create app directory
 WORKDIR /app
 
@@ -29,6 +33,11 @@ ENV PORT=3000
 ENV H5P_BASE_URL=http://localhost:3000
 ENV DJANGO_URL=http://host.docker.internal:8000
 ENV H5P_DATA_PATH=/data/h5p
+
+# Trust the system CA bundle above instead of Node's built-in root list,
+# which only changes with a new Node release
+ENV NODE_OPTIONS=--use-openssl-ca
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Expose the server port
 EXPOSE 3000

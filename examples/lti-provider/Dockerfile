@@ -1,6 +1,11 @@
 # H5P LTI 1.3 tool. See deploy/ for a stack with the H5P server and PostgreSQL.
 FROM python:3.12-slim
 
+# Pick up CA fixes released after the base image was built
+# (e.g. the removal of the compromised eMudhra roots, 2026-10-20)
+RUN apt-get update && apt-get install -y --only-upgrade ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

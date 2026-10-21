@@ -1,6 +1,8 @@
 flask>=3.0
 PyLTI1p3>=2.0.0
 requests>=2.31
+# requests trusts certifi's bundle; 2026.10.19 drops the compromised eMudhra root
+certifi>=2026.10.19
 SQLAlchemy>=2.0
 # PostgreSQL driver (DATABASE_URL=postgresql+psycopg://...); not needed for SQLite
 psycopg[binary]>=3.1
