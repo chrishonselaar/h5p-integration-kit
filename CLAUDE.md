@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 3. **Django Example** - Full Django app with reusable `django_h5p` plugin
 4. **LTI Provider** - LTI 1.3 tool provider for LMS integration
 
-**Note**: We use **nvm (Node Version Manager)** for Node.js. Node.js v24.11.0 is installed via nvm at `/home/chris/.nvm/versions/node/v24.11.0/`.
+**Note**: We use **nvm (Node Version Manager)** for Node.js. Node.js v24 is installed via nvm (`nvm use 24`).
 
 ## Project Structure
 
@@ -38,7 +38,7 @@ h5p-integration-kit/
 ### Start H5P Server
 
 ```bash
-export PATH="/home/chris/.nvm/versions/node/v24.11.0/bin:$PATH"
+export PATH="$HOME/.nvm/versions/node/v24.11.0/bin:$PATH"
 cd h5p-server && npm start
 ```
 
@@ -71,7 +71,7 @@ cd examples/lti-provider && pip install -r requirements.txt && python app.py
 ```bash
 # Kill and restart H5P server
 lsof -ti:3000 | xargs -r kill -9
-cd h5p-server && export PATH="/home/chris/.nvm/versions/node/v24.11.0/bin:$PATH" && npm start
+cd h5p-server && export PATH="$HOME/.nvm/versions/node/v24.11.0/bin:$PATH" && npm start
 # (use run_in_background: true)
 ```
 
